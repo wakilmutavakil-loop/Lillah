@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Faint inner ring: depth behind the counter track. -->
+    <path
+        android:pathData="M40,68.7 A16,16 0 1 1 68,68.7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeAlpha="0.38"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+
+    <!-- Counter track: the tasbih ring, open at the base. -->
+    <path
+        android:pathData="M41,76.5 A26,26 0 1 1 67,76.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round" />
+
+    <!-- The leading bead resting at the top of the ring. -->
+    <path
+        android:pathData="M54,18.5 m-9.5,0 a9.5,9.5 0 1,0 19,0 a9.5,9.5 0 1,0 -19,0"
+        android:fillColor="#FFFFFFFF" />
+</vector>
