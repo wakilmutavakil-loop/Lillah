@@ -14,7 +14,7 @@ local.properties
 *.iml
 .DS_Store
 
-# Keys — the bundled dev keystore is intentionally tracked (see README);
-# real publishing keys must never be.
-keystore/*.keystore
-release-keys/
+# Signing material — never committed.
+keystore.properties
+*.jks
+*.keystore

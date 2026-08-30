@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -19,12 +21,31 @@ android {
         vectorDrawables { useSupportLibrary = true }
     }
 
+    // Release signing is configured by dropping a keystore.properties in the project root:
+    //
+    //   storeFile=/absolute/path/to/release.jks
+    //   storePassword=...
+    //   keyAlias=...
+    //   keyPassword=...
+    //
+    // Without it, `assembleRelease` still produces an installable APK by falling back to the
+    // local debug key. No key material belongs in version control, so none is committed here.
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties().apply {
+        if (keystorePropertiesFile.exists()) {
+            keystorePropertiesFile.inputStream().use { load(it) }
+        }
+    }
+    val hasReleaseKey = keystorePropertiesFile.exists()
+
     signingConfigs {
-        create("localRelease") {
-            storeFile = file("../keystore/dhikr-release.jks")
-            storePassword = "dhikrdhikr"
-            keyAlias = "dhikr"
-            keyPassword = "dhikrdhikr"
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
         }
     }
 
@@ -38,9 +59,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with a checked-in debug-grade keystore so `assembleRelease`
-            // produces an installable APK out of the box. Replace before publishing.
-            signingConfig = signingConfigs.getByName("localRelease")
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
         }
     }
 
@@ -65,6 +84,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    testOptions {
+        unitTests {
+            // Compose screens are rendered under Robolectric in unit tests, which needs the
+            // merged resources and manifest on the test classpath.
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
     }
 
     packaging {
@@ -107,6 +135,11 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core.ktx)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.ui.test.junit4)
+    debugImplementation(libs.androidx.ui.test.manifest)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
