@@ -12,9 +12,14 @@ import com.lillah.dhikr.domain.model.CollectionKind
 import com.lillah.dhikr.domain.model.CollectionProgress
 import com.lillah.dhikr.domain.model.Dhikr
 import com.lillah.dhikr.domain.model.DhikrCollection
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Outcome of a single tap, so the UI knows whether to celebrate. */
 data class CountResult(
@@ -31,6 +36,13 @@ class DhikrRepository(
     private val counterDao: CounterDao,
     private val clock: AppClock,
 ) {
+
+    /**
+     * Serialises the live round's read-modify-write. Rapid tapping is the normal case here, and
+     * two taps that both read the same count would otherwise lose one of them. The day ledger
+     * itself is safe without this — it increments in SQL — but the round state is not.
+     */
+    private val roundMutex = Mutex()
 
     fun observeAll(): Flow<List<Dhikr>> =
         dhikrDao.observeActive().map { list -> list.map { it.toDomain() } }
@@ -63,11 +75,10 @@ class DhikrRepository(
         collectionDao.getByKind(kind.name)?.id
 
     /** Collections joined with today's completion, ready for the Collections grid. */
-    fun observeCollectionProgress(): Flow<List<CollectionProgress>> {
-        val today = clock.todayEpochDay()
-        return combine(
+    fun observeCollectionProgress(): Flow<List<CollectionProgress>> = today().flatMapLatest { day ->
+        combine(
             collectionDao.observeAll(),
-            countDao.observeCollectionCompletions(today),
+            countDao.observeCollectionCompletions(day),
         ) { collections, completions ->
             val byId = completions.associateBy { it.collectionId }
             collections.map { entity ->
@@ -82,6 +93,16 @@ class DhikrRepository(
         }
     }
 
+    /** Mirrors [StatsRepository]'s ticker so collection progress also rolls over at midnight. */
+    private fun today(): Flow<Long> = flow {
+        while (true) {
+            emit(clock.todayEpochDay())
+            val nextMidnight = clock.today().plusDays(1)
+                .atStartOfDay(clock.zone()).toInstant().toEpochMilli()
+            delay((nextMidnight - clock.nowMillis()).coerceIn(1_000L, 6 * 60 * 60 * 1000L))
+        }
+    }
+
     // ------------------------------------------------------------------ counting
 
     /**
@@ -89,8 +110,8 @@ class DhikrRepository(
      * half-finished tasbih survives the process being killed, and the day ledger that every
      * statistic is built from.
      */
-    suspend fun increment(dhikrId: Long, delta: Int = 1): CountResult? {
-        val entity = dhikrDao.getById(dhikrId) ?: return null
+    suspend fun increment(dhikrId: Long, delta: Int = 1): CountResult? = roundMutex.withLock {
+        val entity = dhikrDao.getById(dhikrId) ?: return@withLock null
         val target = entity.targetCount.coerceAtLeast(1)
         val today = clock.todayEpochDay()
         val now = clock.nowMillis()
@@ -106,19 +127,19 @@ class DhikrRepository(
         countDao.addCount(dhikrId, today, delta, now)
         counterDao.raiseTo(CounterKeys.BEST_SESSION, next.toLong())
 
-        return CountResult(next, target, completed, rounds)
+        CountResult(next, target, completed, rounds)
     }
 
     /** Undo. Rolls back into the previous round rather than sticking at zero. */
-    suspend fun decrement(dhikrId: Long): CountResult? {
-        val entity = dhikrDao.getById(dhikrId) ?: return null
+    suspend fun decrement(dhikrId: Long): CountResult? = roundMutex.withLock {
+        val entity = dhikrDao.getById(dhikrId) ?: return@withLock null
         val target = entity.targetCount.coerceAtLeast(1)
         val today = clock.todayEpochDay()
         val now = clock.nowMillis()
         val roundsToday = if (entity.roundsEpochDay == today) entity.roundsToday else 0
 
         if (entity.currentCount == 0 && roundsToday == 0) {
-            return CountResult(0, target, false, 0)
+            return@withLock CountResult(0, target, false, 0)
         }
 
         val (next, rounds) = if (entity.currentCount == 0) {
@@ -135,7 +156,7 @@ class DhikrRepository(
 
         dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
         countDao.addCount(dhikrId, today, -1, now)
-        return CountResult(next, target, false, rounds)
+        CountResult(next, target, false, rounds)
     }
 
     /** Clears the live round only. Today's recorded total is history and is left alone. */

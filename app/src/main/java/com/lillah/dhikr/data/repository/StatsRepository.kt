@@ -10,8 +10,11 @@ import com.lillah.dhikr.domain.model.DayPoint
 import com.lillah.dhikr.domain.model.MonthStats
 import com.lillah.dhikr.domain.model.StreakInfo
 import com.lillah.dhikr.domain.model.WeekStats
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 import java.time.temporal.WeekFields
@@ -22,30 +25,50 @@ class StatsRepository(
     private val clock: AppClock,
 ) {
 
-    fun observeTodayTotal(): Flow<Int> = countDao.observeDayTotal(clock.todayEpochDay())
+    /**
+     * Emits the current day and re-emits when the date turns over.
+     *
+     * Everything scoped to "today" hangs off this. Without it, an app left open overnight would
+     * keep counting into yesterday's row and show a stale total in the morning.
+     */
+    private fun today(): Flow<Long> = flow {
+        while (true) {
+            emit(clock.todayEpochDay())
+            val nextMidnight = clock.today().plusDays(1)
+                .atStartOfDay(clock.zone()).toInstant().toEpochMilli()
+            delay((nextMidnight - clock.nowMillis()).coerceIn(1_000L, MAX_SLEEP_MILLIS))
+        }
+    }
+
+    fun observeTodayTotal(): Flow<Int> =
+        today().flatMapLatest { day -> countDao.observeDayTotal(day) }
 
     fun observeLifetimeTotal(): Flow<Long> = countDao.observeLifetimeTotal()
 
     fun observeGrowth(): Flow<GrowthState> =
         countDao.observeLifetimeTotal().map { GrowthState.forTotal(it) }
 
-    fun observeStreak(): Flow<StreakInfo> =
-        countDao.observeActiveDays().map { Streaks.compute(it, clock.todayEpochDay()) }
+    fun observeStreak(): Flow<StreakInfo> = today().flatMapLatest { day ->
+        countDao.observeActiveDays().map { Streaks.compute(it, day) }
+    }
 
     fun observeActiveDayCount(): Flow<Int> = countDao.observeActiveDayCount()
 
-    fun observeTodayBreakdown(): Flow<List<BreakdownItem>> =
-        countDao.observeDayBreakdown(clock.todayEpochDay()).map { rows ->
+    fun observeTodayBreakdown(): Flow<List<BreakdownItem>> = today().flatMapLatest { day ->
+        countDao.observeDayBreakdown(day).map { rows ->
             rows.map { BreakdownItem(it.dhikrId, it.name, it.arabic, it.accentIndex, it.total) }
         }
+    }
 
-    fun observeDhikrTodayCounts(): Flow<Map<Long, Int>> =
-        countDao.observeDayBreakdown(clock.todayEpochDay()).map { rows ->
-            rows.associate { it.dhikrId to it.total }
-        }
+    fun observeDhikrTodayCounts(): Flow<Map<Long, Int>> = today().flatMapLatest { day ->
+        countDao.observeDayBreakdown(day).map { rows -> rows.associate { it.dhikrId to it.total } }
+    }
 
-    /** Monday-anchored week containing [reference], plus the week before it for comparison. */
-    fun observeWeek(reference: LocalDate = clock.today()): Flow<WeekStats> {
+    /** The week containing today, plus the week before it for comparison. */
+    fun observeWeek(): Flow<WeekStats> = today().flatMapLatest { weekStats(clock.today()) }
+
+    /** The locale's week containing [reference], plus the week before it for comparison. */
+    fun weekStats(reference: LocalDate): Flow<WeekStats> {
         val start = startOfWeek(reference)
         val end = start.plusDays(6)
         val previousStart = start.minusWeeks(1)
@@ -64,7 +87,9 @@ class StatsRepository(
         }
     }
 
-    fun observeMonth(reference: LocalDate = clock.today()): Flow<MonthStats> {
+    fun observeMonth(): Flow<MonthStats> = today().flatMapLatest { monthStats(clock.today()) }
+
+    fun monthStats(reference: LocalDate): Flow<MonthStats> {
         val first = reference.withDayOfMonth(1)
         val last = first.plusMonths(1).minusDays(1)
         return countDao.observeDayTotals(first.toEpochDay(), last.toEpochDay()).map { rows ->
@@ -79,11 +104,11 @@ class StatsRepository(
     }
 
     /** Rolling window used by the sparkline on the home screen. */
-    fun observeRecentDays(count: Int = 14): Flow<List<DayPoint>> {
+    fun observeRecentDays(count: Int = 14): Flow<List<DayPoint>> = today().flatMapLatest {
         val end = clock.today()
         val start = end.minusDays((count - 1).toLong())
-        return countDao.observeDayTotals(start.toEpochDay(), end.toEpochDay())
-            .map { fillRange(start, end, it) }
+        countDao.observeDayTotals(start.toEpochDay(), end.toEpochDay())
+            .map { rows -> fillRange(start, end, rows) }
     }
 
     suspend fun todayTotal(): Int = countDao.dayTotal(clock.todayEpochDay())
@@ -93,6 +118,9 @@ class StatsRepository(
     suspend fun clearAllHistory() = countDao.clearAll()
 
     companion object {
+        /** Cap on a single sleep, so a clock jump cannot park the ticker for days. */
+        private const val MAX_SLEEP_MILLIS = 6 * 60 * 60 * 1000L
+
         fun startOfWeek(date: LocalDate): LocalDate {
             val firstDay = WeekFields.of(Locale.getDefault()).firstDayOfWeek
             val delta = (date.dayOfWeek.value - firstDay.value + 7) % 7
