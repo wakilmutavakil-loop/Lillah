@@ -47,7 +47,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setSound(enabled: Boolean) = launch { settingsRepository.setSound(enabled) }
     fun setKeepScreenOn(enabled: Boolean) = launch { settingsRepository.setKeepScreenOn(enabled) }
     fun setVolumeKeys(enabled: Boolean) = launch { settingsRepository.setVolumeKeys(enabled) }
-    fun setAutoAdvance(enabled: Boolean) = launch { settingsRepository.setAutoAdvance(enabled) }
     fun setShowArabic(enabled: Boolean) = launch { settingsRepository.setShowArabic(enabled) }
     fun setShowTransliteration(enabled: Boolean) =
         launch { settingsRepository.setShowTransliteration(enabled) }

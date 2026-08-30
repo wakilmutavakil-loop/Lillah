@@ -29,14 +29,12 @@ data class UserSettings(
     val dailyGoal: Int = 100,
     val keepScreenOn: Boolean = true,
     val countWithVolumeKeys: Boolean = false,
-    val autoAdvanceInCollection: Boolean = true,
     val showArabic: Boolean = true,
     val showTransliteration: Boolean = true,
     val showMeaning: Boolean = true,
     val onboardingComplete: Boolean = false,
     val activeDhikrId: Long = 0,
     val lastOpenedEpochDay: Long = 0,
-    val lastSummaryShownEpochDay: Long = 0,
 )
 
 /**
@@ -53,14 +51,12 @@ class SettingsRepository(private val context: Context) {
         val dailyGoal = intPreferencesKey("daily_goal")
         val keepScreenOn = booleanPreferencesKey("keep_screen_on")
         val volumeKeys = booleanPreferencesKey("volume_keys")
-        val autoAdvance = booleanPreferencesKey("auto_advance")
         val showArabic = booleanPreferencesKey("show_arabic")
         val showTransliteration = booleanPreferencesKey("show_transliteration")
         val showMeaning = booleanPreferencesKey("show_meaning")
         val onboarding = booleanPreferencesKey("onboarding_complete")
         val activeDhikr = longPreferencesKey("active_dhikr")
         val lastOpened = longPreferencesKey("last_opened_day")
-        val lastSummary = longPreferencesKey("last_summary_day")
     }
 
     val settings: Flow<UserSettings> = context.settingsStore.data
@@ -78,14 +74,12 @@ class SettingsRepository(private val context: Context) {
                 dailyGoal = prefs[Keys.dailyGoal] ?: defaults.dailyGoal,
                 keepScreenOn = prefs[Keys.keepScreenOn] ?: defaults.keepScreenOn,
                 countWithVolumeKeys = prefs[Keys.volumeKeys] ?: defaults.countWithVolumeKeys,
-                autoAdvanceInCollection = prefs[Keys.autoAdvance] ?: defaults.autoAdvanceInCollection,
                 showArabic = prefs[Keys.showArabic] ?: defaults.showArabic,
                 showTransliteration = prefs[Keys.showTransliteration] ?: defaults.showTransliteration,
                 showMeaning = prefs[Keys.showMeaning] ?: defaults.showMeaning,
                 onboardingComplete = prefs[Keys.onboarding] ?: defaults.onboardingComplete,
                 activeDhikrId = prefs[Keys.activeDhikr] ?: defaults.activeDhikrId,
                 lastOpenedEpochDay = prefs[Keys.lastOpened] ?: defaults.lastOpenedEpochDay,
-                lastSummaryShownEpochDay = prefs[Keys.lastSummary] ?: defaults.lastSummaryShownEpochDay,
             )
         }
 
@@ -96,18 +90,12 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDailyGoal(goal: Int) = edit { it[Keys.dailyGoal] = goal.coerceIn(10, 10_000) }
     suspend fun setKeepScreenOn(enabled: Boolean) = edit { it[Keys.keepScreenOn] = enabled }
     suspend fun setVolumeKeys(enabled: Boolean) = edit { it[Keys.volumeKeys] = enabled }
-    suspend fun setAutoAdvance(enabled: Boolean) = edit { it[Keys.autoAdvance] = enabled }
     suspend fun setShowArabic(enabled: Boolean) = edit { it[Keys.showArabic] = enabled }
     suspend fun setShowTransliteration(enabled: Boolean) = edit { it[Keys.showTransliteration] = enabled }
     suspend fun setShowMeaning(enabled: Boolean) = edit { it[Keys.showMeaning] = enabled }
     suspend fun setOnboardingComplete(done: Boolean) = edit { it[Keys.onboarding] = done }
     suspend fun setActiveDhikr(id: Long) = edit { it[Keys.activeDhikr] = id }
     suspend fun setLastOpenedDay(day: Long) = edit { it[Keys.lastOpened] = day }
-    suspend fun setLastSummaryShown(day: Long) = edit { it[Keys.lastSummary] = day }
-
-    suspend fun resetToDefaults() {
-        context.settingsStore.edit { it.clear() }
-    }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.settingsStore.edit(block)

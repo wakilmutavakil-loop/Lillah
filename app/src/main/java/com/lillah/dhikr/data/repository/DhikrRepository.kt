@@ -61,8 +61,6 @@ class DhikrRepository(
 
     suspend fun getDhikr(id: Long): Dhikr? = dhikrDao.getById(id)?.toDomain()
 
-    suspend fun firstDhikrId(): Long? = dhikrDao.getFirstActive()?.id
-
     fun observeCollections(): Flow<List<DhikrCollection>> =
         collectionDao.observeAll().map { list -> list.map { it.toDomain() } }
 
@@ -180,8 +178,6 @@ class DhikrRepository(
         dhikrDao.setArchived(dhikrId, archived)
     suspend fun setFavorite(dhikrId: Long, favorite: Boolean) =
         dhikrDao.setFavorite(dhikrId, favorite)
-    suspend fun setDailyTarget(dhikrId: Long, dailyTarget: Int?) =
-        dhikrDao.setDailyTarget(dhikrId, dailyTarget)
     suspend fun reorder(idsInOrder: List<Long>) = dhikrDao.applyOrder(idsInOrder)
 
     suspend fun upsertCollection(collection: DhikrCollection): Long {
@@ -196,7 +192,9 @@ class DhikrRepository(
 
     suspend fun deleteCollection(id: Long) = collectionDao.deleteById(id)
     suspend fun setCollectionCover(id: Long, path: String?) = collectionDao.setCoverImage(id, path)
-    suspend fun reorderCollections(idsInOrder: List<Long>) = collectionDao.applyOrder(idsInOrder)
+
+    /** Every cover still referenced by a collection, for pruning orphaned files. */
+    suspend fun referencedCoverPaths(): List<String> = collectionDao.coverImagePaths()
 
     // ------------------------------------------------------------------ seeding
 

@@ -59,21 +59,10 @@ interface CountDao {
     suspend fun lifetimeTotal(): Long
 
     @Query(
-        "SELECT COALESCE(count, 0) FROM dhikr_counts WHERE dhikrId = :dhikrId AND epochDay = :epochDay"
-    )
-    fun observeDhikrDayCount(dhikrId: Long, epochDay: Long): Flow<Int?>
-
-    @Query(
         "SELECT epochDay AS epochDay, SUM(count) AS total FROM dhikr_counts " +
             "WHERE epochDay BETWEEN :fromDay AND :toDay GROUP BY epochDay ORDER BY epochDay ASC"
     )
     fun observeDayTotals(fromDay: Long, toDay: Long): Flow<List<DayTotal>>
-
-    @Query(
-        "SELECT epochDay AS epochDay, SUM(count) AS total FROM dhikr_counts " +
-            "WHERE epochDay BETWEEN :fromDay AND :toDay GROUP BY epochDay ORDER BY epochDay ASC"
-    )
-    suspend fun dayTotals(fromDay: Long, toDay: Long): List<DayTotal>
 
     @Query(
         "SELECT c.dhikrId AS dhikrId, d.name AS name, d.arabic AS arabic, " +
@@ -82,15 +71,6 @@ interface CountDao {
             "WHERE c.epochDay = :epochDay AND c.count > 0 ORDER BY c.count DESC"
     )
     fun observeDayBreakdown(epochDay: Long): Flow<List<DhikrDayTotal>>
-
-    @Query(
-        "SELECT c.dhikrId AS dhikrId, d.name AS name, d.arabic AS arabic, " +
-            "d.accentIndex AS accentIndex, d.targetCount AS targetCount, SUM(c.count) AS total " +
-            "FROM dhikr_counts c INNER JOIN dhikr d ON d.id = c.dhikrId " +
-            "WHERE c.epochDay BETWEEN :fromDay AND :toDay AND c.count > 0 " +
-            "GROUP BY c.dhikrId ORDER BY total DESC"
-    )
-    fun observeRangeBreakdown(fromDay: Long, toDay: Long): Flow<List<DhikrDayTotal>>
 
     /** Days on which anything at all was counted — the raw material for streaks. */
     @Query("SELECT DISTINCT epochDay FROM dhikr_counts WHERE count > 0 ORDER BY epochDay DESC")
@@ -101,16 +81,6 @@ interface CountDao {
 
     @Query("SELECT COUNT(DISTINCT epochDay) FROM dhikr_counts WHERE count > 0")
     fun observeActiveDayCount(): Flow<Int>
-
-    @Query("SELECT MIN(epochDay) FROM dhikr_counts WHERE count > 0")
-    fun observeFirstActiveDay(): Flow<Long?>
-
-    @Query(
-        "SELECT COALESCE(SUM(count), 0) FROM dhikr_counts " +
-            "WHERE dhikrId IN (SELECT id FROM dhikr WHERE collectionId = :collectionId) " +
-            "AND epochDay = :epochDay"
-    )
-    fun observeCollectionDayTotal(collectionId: Long, epochDay: Long): Flow<Int>
 
     @Query(
         "SELECT d.collectionId AS collectionId, COUNT(*) AS itemCount, " +

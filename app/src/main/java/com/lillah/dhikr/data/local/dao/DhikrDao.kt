@@ -33,14 +33,8 @@ interface DhikrDao {
     @Query("SELECT * FROM dhikr WHERE id = :id")
     suspend fun getById(id: Long): DhikrEntity?
 
-    @Query("SELECT * FROM dhikr WHERE isArchived = 0 ORDER BY sortOrder ASC, id ASC LIMIT 1")
-    suspend fun getFirstActive(): DhikrEntity?
-
     @Query("SELECT COUNT(*) FROM dhikr")
     suspend fun count(): Int
-
-    @Query("SELECT COUNT(*) FROM dhikr WHERE isBuiltIn = 0")
-    suspend fun countCustom(): Int
 
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM dhikr")
     suspend fun maxSortOrder(): Int

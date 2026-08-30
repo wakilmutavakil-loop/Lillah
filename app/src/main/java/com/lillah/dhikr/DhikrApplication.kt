@@ -23,6 +23,12 @@ class DhikrApplication : Application() {
         // and content the user has cleared out is never silently resurrected mid-session.
         applicationScope.launch {
             container.dhikrRepository.seedIfEmpty()
+
+            // Sweep cover images no collection points at any more. Saving a cover writes the file
+            // before recording the path, so a crash in between would otherwise leave one stranded.
+            container.coverImageStore.pruneExcept(
+                container.dhikrRepository.referencedCoverPaths()
+            )
         }
     }
 

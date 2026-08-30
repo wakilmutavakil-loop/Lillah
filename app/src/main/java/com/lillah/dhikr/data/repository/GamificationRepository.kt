@@ -37,8 +37,6 @@ class GamificationRepository(
         AchievementCatalog.statuses(snapshot, unlocked.associate { it.key to it.unlockedAt })
     }
 
-    fun observeUnlockedCount(): Flow<Int> = achievementDao.observeAll().map { it.size }
-
     /** Newly unlocked achievements the UI has not celebrated yet. */
     fun observePendingCelebrations(): Flow<List<AchievementDef>> =
         achievementDao.observeUncelebrated().map { rows ->

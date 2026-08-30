@@ -42,11 +42,7 @@ interface CollectionDao {
     @Query("UPDATE collections SET coverImagePath = :path WHERE id = :id")
     suspend fun setCoverImage(id: Long, path: String?)
 
-    @Query("UPDATE collections SET sortOrder = :sortOrder WHERE id = :id")
-    suspend fun setSortOrder(id: Long, sortOrder: Int)
+    @Query("SELECT coverImagePath FROM collections WHERE coverImagePath IS NOT NULL")
+    suspend fun coverImagePaths(): List<String>
 
-    @Transaction
-    suspend fun applyOrder(idsInOrder: List<Long>) {
-        idsInOrder.forEachIndexed { index, id -> setSortOrder(id, index) }
-    }
 }
