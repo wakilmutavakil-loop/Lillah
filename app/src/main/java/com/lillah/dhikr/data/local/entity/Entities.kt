@@ -99,3 +99,49 @@ data class CounterEntity(
     @PrimaryKey val key: String,
     val value: Long,
 )
+
+/**
+ * The outbox. Every count produces one append-only row here, written in the same transaction as
+ * the count itself, so a contribution can never be recorded locally without also being queued for
+ * the cloud.
+ *
+ * [opId] is a client-generated UUID that doubles as the remote document id. Pushing the same
+ * operation twice therefore writes the same document twice, which the backend folds into the
+ * totals exactly once — retries after a timeout or a crash cannot double count.
+ *
+ * Deliberately carries no foreign key to `dhikr`: deleting a dhikr must not retract a
+ * contribution that has already been made, so [dhikrName] is denormalised here.
+ */
+@Entity(tableName = "sync_operations", indices = [Index("state"), Index("createdAt")])
+data class SyncOperationEntity(
+    @PrimaryKey val opId: String,
+    /** Matches a [com.lillah.dhikr.domain.sync.SyncOperationKind] name. */
+    val kind: String,
+    val dhikrId: Long? = null,
+    val dhikrName: String? = null,
+    val epochDay: Long,
+    val delta: Int,
+    val createdAt: Long,
+    /** Matches a [com.lillah.dhikr.domain.sync.SyncState] name. */
+    val state: String,
+    val attempts: Int = 0,
+    val lastAttemptAt: Long? = null,
+    val lastError: String? = null,
+    /** The account this operation was accepted under, once it has been. */
+    val ownerUid: String? = null,
+)
+
+/**
+ * Last known cloud figures, cached so the Universal Dhikr board still renders something truthful
+ * when the device is offline. Single row, always id 0.
+ */
+@Entity(tableName = "remote_snapshot")
+data class RemoteSnapshotEntity(
+    @PrimaryKey val id: Int = 0,
+    val globalTotal: Long = 0,
+    val globalToday: Long = 0,
+    val participantCount: Long = 0,
+    val userTotal: Long = 0,
+    val userUid: String? = null,
+    val updatedAt: Long = 0,
+)

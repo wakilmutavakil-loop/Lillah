@@ -15,36 +15,44 @@ android {
         applicationId = "com.lillah.dhikr"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // versionCode must only ever increase; Android rejects a downgrade install.
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
 
-    // Release signing is configured by dropping a keystore.properties in the project root:
+    // Signing has two jobs here, in priority order.
     //
-    //   storeFile=/absolute/path/to/release.jks
-    //   storePassword=...
-    //   keyAlias=...
-    //   keyPassword=...
+    // 1. Continuity. Android refuses to install an update signed by a different key than the
+    //    installed app, so builds default to the key that signed the released v1.0.0 APK
+    //    (signing/dhikr-upgrade.jks, SHA-256 35:DA:2A:FB...). Without it, existing users could
+    //    not update in place, which is the one thing this release must not break.
+    // 2. Publishing. A keystore.properties in the project root overrides the continuity key.
+    //    It is gitignored, and no publishing secret is committed.
     //
-    // Without it, `assembleRelease` still produces an installable APK by falling back to the
-    // local debug key. No key material belongs in version control, so none is committed here.
+    // Note: switching to a publishing key breaks in-place updates for anyone who sideloaded
+    // v1.0.0. See README, "Signing and upgrade continuity".
     val keystorePropertiesFile = rootProject.file("keystore.properties")
-    val keystoreProperties = Properties().apply {
+    val continuityKeystore = rootProject.file("signing/dhikr-upgrade.jks")
+    val releaseProperties = Properties().apply {
         if (keystorePropertiesFile.exists()) {
             keystorePropertiesFile.inputStream().use { load(it) }
         }
     }
-    val hasReleaseKey = keystorePropertiesFile.exists()
 
     signingConfigs {
-        if (hasReleaseKey) {
-            create("release") {
-                storeFile = file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
+        create("upgrade") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(releaseProperties.getProperty("storeFile"))
+                storePassword = releaseProperties.getProperty("storePassword")
+                keyAlias = releaseProperties.getProperty("keyAlias")
+                keyPassword = releaseProperties.getProperty("keyPassword")
+            } else {
+                storeFile = continuityKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
             }
         }
     }
@@ -59,7 +67,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+            signingConfig = signingConfigs.getByName("upgrade")
         }
     }
 

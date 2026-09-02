@@ -14,7 +14,13 @@ local.properties
 *.iml
 .DS_Store
 
-# Signing material — never committed.
+# Signing material. Publishing credentials never belong in version control.
 keystore.properties
+
+# ...with one deliberate exception: signing/dhikr-upgrade.jks is the continuity key that
+# signed the released v1.0.0 APK. Android refuses an update signed by a different key, so
+# losing this file would strand every existing install. It is debug-grade by origin and is
+# not a publishing secret; see README "Signing and upgrade continuity".
 *.jks
 *.keystore
+!signing/dhikr-upgrade.jks
