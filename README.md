@@ -1,9 +1,9 @@
 # Dhikr — ذِكْر
 
-A digital tasbih and daily remembrance app for Android. Offline-first, no account,
-no tracking, and built so that keeping a habit feels better than breaking one.
+A digital tasbih and daily remembrance app for Android. Offline-first, and built so that keeping
+a habit feels better than breaking one.
 
-<sub>Package `com.lillah.dhikr` · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
+<sub>Package `com.lillah.dhikr` · v1.1.0 (versionCode 2) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
 
 ---
 
@@ -27,7 +27,48 @@ garden that grows and never shrinks. Twenty-one milestones show their progress w
 **Themes.** Seven palettes, each chosen from a gallery where every card paints itself in its own
 colours. The whole app cross-fades into the choice. Light, dark, and system.
 
+**Universal Dhikr.** A community board showing the worldwide total, this account's contribution,
+and its share of that total — recomputed from live figures rather than stored. Beneath it, today,
+this week, this month, this year and all time.
+
+**Accounts and sync.** Optional Google or Facebook sign-in. Counting never waits on the network:
+every count is written locally and queued, and the queue drains when it can.
+
 **Guidebook.** Seven short articles on dhikr and on the app itself, written to be read.
+
+---
+
+## Upgrading from v1.0.0
+
+Installing v1.1.0 over v1.0.0 is an ordinary update. There is no uninstall step, and nothing is
+reset. Three things make that true, and all three are verified rather than assumed:
+
+| | |
+| --- | --- |
+| **Same package id** | `com.lillah.dhikr`, unchanged |
+| **Higher versionCode** | 1 → 2 |
+| **Same signing key** | SHA-256 `35:DA:2A:FB…`, identical to the released v1.0.0 APK |
+
+The database migration is additive: version 2 creates two new tables and alters nothing.
+`fallbackToDestructiveMigration` is absent by design, so a migration gap would fail loudly rather
+than silently emptying the app.
+
+`MigrationV1ToV2Test` runs against a database built from the released v1 schema's own DDL and
+identity hash. It asserts that 25,000 counts over 100 days survive exactly, that a half-finished
+round is not reset, that adding 5,000 afterwards gives 30,000 with the earlier days untouched, and
+that empty, sparse, 4,000-row and already-migrated databases all open cleanly.
+
+### Signing and upgrade continuity
+
+`signing/dhikr-upgrade.jks` is committed deliberately. Android refuses an update signed by a
+different key, and this is the key that signed the released v1.0.0 APK — losing it would strand
+every existing install. It is debug-grade by origin and guards nothing: treat it as a compatibility
+artifact, not a secret.
+
+A `keystore.properties` at the project root overrides it for publishing. Be aware that doing so
+breaks in-place updates for anyone who installed a build signed with the continuity key; for Play
+Store distribution, enrol in Play App Signing before the first release rather than switching keys
+afterwards.
 
 ---
 
@@ -59,20 +100,22 @@ Single Gradle module, layered by package.
 com.lillah.dhikr
 ├── core/            clock, haptics, synthesised audio, cover storage, DI container
 ├── data/
-│   ├── local/       Room entities, DAOs, mappers
-│   ├── prefs/       DataStore settings
+│   ├── local/       Room entities, DAOs, mappers, migrations
+│   ├── backend/     cloud abstraction, Firestore and Firebase Auth implementations
+│   ├── prefs/       DataStore settings and account state
 │   ├── seed/        shipped adhkar
 │   ├── guide/       guidebook content
-│   └── repository/  Dhikr, Stats, Gamification
+│   └── repository/  Dhikr, Stats, Gamification, Sync
 ├── domain/
 │   ├── model/       UI-shaped models, independent of Room
-│   └── gamification/streaks, growth stages, achievement catalog
+│   ├── gamification/streaks, growth stages, achievement catalog
+│   └── sync/        operation kinds, auth types, contribution maths
 └── ui/
     ├── theme/       palettes, derived colour schemes, type, shape, motion
     ├── components/  counter, rings, charts, covers, cards, sheets
     ├── navigation/  routes, nav bar, NavHost
     ├── vm/          ViewModel plumbing
-    └── screens/     home, collections, editor, progress, guide, settings, manage
+    └── screens/     home, collections, editor, progress, universal, guide, settings, manage
 ```
 
 **State.** Unidirectional. ViewModels expose a single immutable `UiState` via `StateFlow`;
@@ -87,6 +130,47 @@ injection and the same testability without adding a second annotation processor 
 per-dhikr-per-day count ledger that every statistic is derived from. Anything re-derivable is
 re-derived; only facts with no durable trace (how many times a collection was finished; how many
 days a goal that has since changed was met) are stored as counters.
+
+### Sync
+
+Counting is local and immediate; the cloud is downstream of it and never in the way.
+
+Every count writes two rows in **one transaction**: the day ledger, and an append-only operation in
+an outbox. A count that reached the device but not the queue would never reach the cloud, so
+neither is allowed to commit without the other.
+
+Each operation carries a client-generated UUID that becomes its remote document id, and the
+aggregation function claims a marker document inside the same transaction that moves the totals.
+That is what makes retries safe: a client retry, a function retry, and a rewritten document all
+converge on the marker and stop. `SyncRepositoryTest` pushes the same operations three times and
+asserts the total is unchanged.
+
+Nothing is ever discarded. A failed push increments an attempt counter and stays queued; there is
+no code path that deletes an unsynced operation. Signing out clears the session and nothing else.
+
+**Existing history** — the counting a device did before this feature existed — is claimed once, as
+a single operation whose id is derived from the device. The amount is the local lifetime total
+minus everything the outbox has ever carried, which is exactly the pre-outbox history. Running the
+claim repeatedly inserts nothing new, so 12,500 dhikr before the upgrade are 12,500 after it, and
+not 25,000.
+
+The account total shown is the server's figure plus anything still queued locally, so the number
+never stalls mid-sync and a second device signing into the same account shows the account's total
+rather than its own.
+
+### Backend
+
+Firestore, with Cloud Functions folding operations into per-user and worldwide totals. Clients
+write only immutable operation documents; totals and the global aggregate are closed to client
+writes by the security rules, so nobody can set their own total — or anybody else's. A nightly job
+recomputes the worldwide figure from the per-user totals and repairs any drift.
+
+Setup, data layout and the rules are documented in [`backend/README.md`](backend/README.md).
+
+**The app builds and runs with no backend at all.** Firebase is initialised programmatically from a
+gitignored `backend.properties` rather than through the google-services Gradle plugin, which fails
+the build outright when its config file is missing. Without credentials the app is exactly the
+offline counter v1.0.0 was, and the Universal Dhikr tab says so rather than showing an error.
 
 ### Decisions worth knowing about
 
@@ -128,17 +212,20 @@ the rest.
 
 ```bash
 ./gradlew :app:assembleDebug     # debug APK
-./gradlew :app:assembleRelease   # release APK, R8-shrunk (~2 MB)
-./gradlew :app:testDebugUnitTest # 50 unit and screen-render tests
+./gradlew :app:assembleRelease   # release APK, R8-shrunk (~4 MB)
+./gradlew :app:testDebugUnitTest # 81 unit, migration, sync and screen tests
 ```
+
+Cloud features need a `backend.properties`; see [`backend/README.md`](backend/README.md). Without
+it the build succeeds and the app runs as a purely local counter.
 
 Outputs land in `app/build/outputs/apk/`.
 
 ### Signing
 
-`assembleRelease` produces an installable APK with no setup, falling back to the local debug key.
-For a real signing key, drop a `keystore.properties` in the project root — it is gitignored, and no
-key material is committed:
+`assembleRelease` signs with the continuity key by default, so its output installs over an existing
+v1.0.0. To publish with your own key, add a gitignored `keystore.properties` at the project root —
+and read the warning in "Signing and upgrade continuity" first:
 
 ```properties
 storeFile=/absolute/path/to/release.jks
@@ -151,7 +238,15 @@ keyPassword=...
 
 ## Tests
 
-50 tests, all JVM — no device or emulator needed.
+81 tests, all JVM — no device or emulator needed.
+
+- **Migration** — a real v1 database, built from the released schema's DDL and identity hash,
+  upgraded and read back through the production DAOs. See "Upgrading from v1.0.0" above.
+- **Sync** — an in-memory database against a fake backend that keys operations by id the way
+  Firestore does: retries do not double count, a failed push keeps every operation queued, signing
+  out leaves the queue intact, and the baseline claim is idempotent across repeated sign-ins.
+- **Contribution maths** — the share calculation and its formatting, including the small
+  percentages the board actually shows.
 
 - **Domain** — streak edges (an untouched today, duplicate days, unsorted input), growth stage
   monotonicity, achievement unlock rules and metric coverage.
@@ -159,7 +254,8 @@ keyPassword=...
   within a collection (restore matches on name, so a duplicate would be unrestorable), Arabic
   actually in Arabic script, the after-prayer tasbih keeping its traditional counts.
 - **UI** — every screen rendered under Robolectric, including the states easiest to get wrong: an
-  empty collection list, a fully complete collection, no history at all, and all seven palettes.
+  empty collection list, a fully complete collection, no history at all, all seven palettes, and
+  the Universal board signed in, signed out, mid-sync and with no backend configured.
 
 ---
 
@@ -171,10 +267,11 @@ Deliberately left in place for what comes next:
   (`GuideContent`, `SeedData`) rather than being scattered. Swapping either for a locale-aware
   provider is a contained change, and the layout is already RTL-ready via auto-mirrored icons and
   `supportsRtl`.
-- **Sync and backup** — repositories are the only thing that touch storage, and the count ledger is
-  an append-friendly per-day table.
 - **Widgets and reminders** — the same repositories serve a Glance widget or a scheduled worker
   without change.
+- **Cross-device history** — the account total is cloud-authoritative today, while per-day history
+  stays on the device that recorded it. Merging full histories across devices would build on the
+  same operation log, which already carries everything needed to do it.
 
 ---
 

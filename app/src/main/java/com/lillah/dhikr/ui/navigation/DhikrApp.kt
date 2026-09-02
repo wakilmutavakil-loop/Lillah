@@ -54,8 +54,11 @@ import com.lillah.dhikr.ui.screens.progress.ProgressScreen
 import com.lillah.dhikr.ui.screens.progress.ProgressViewModel
 import com.lillah.dhikr.ui.screens.settings.SettingsScreen
 import com.lillah.dhikr.ui.screens.settings.SettingsViewModel
+import com.lillah.dhikr.ui.screens.universal.UniversalScreen
+import com.lillah.dhikr.ui.screens.universal.UniversalViewModel
 import com.lillah.dhikr.ui.theme.Motion
 import com.lillah.dhikr.ui.theme.Spacing
+import com.lillah.dhikr.ui.vm.LocalActivity
 import com.lillah.dhikr.ui.vm.containerViewModel
 
 private const val SLIDE = 60
@@ -140,6 +143,20 @@ fun DhikrApp(
                     state = state,
                     range = range,
                     onSelectRange = viewModel::selectRange,
+                    contentPadding = contentPadding,
+                )
+            }
+
+            composable(Routes.UNIVERSAL) {
+                val viewModel = containerViewModel { UniversalViewModel(it) }
+                val state by viewModel.uiState.collectAsStateWithLifecycle()
+                val activity = LocalActivity.current
+                UniversalScreen(
+                    state = state,
+                    onSignIn = { method -> activity?.let { viewModel.signIn(it, method) } },
+                    onSignOut = viewModel::signOut,
+                    onSyncNow = viewModel::syncNow,
+                    onDismissMessage = viewModel::dismissMessage,
                     contentPadding = contentPadding,
                 )
             }

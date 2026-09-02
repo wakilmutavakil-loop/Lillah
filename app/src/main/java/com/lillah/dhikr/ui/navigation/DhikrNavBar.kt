@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lillah.dhikr.ui.components.softShadow
 import com.lillah.dhikr.ui.theme.LocalAppGradients
 import com.lillah.dhikr.ui.theme.Motion
@@ -49,7 +50,7 @@ fun DhikrNavBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 10.dp, vertical = 10.dp)
             .softShadow(20.dp, Radii.chip, MaterialTheme.colorScheme.primary, alpha = 0.22f)
             .clip(Radii.chip)
             .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.97f))
@@ -88,7 +89,7 @@ fun DhikrNavBar(
                 Box(
                     modifier = Modifier
                         .scale(scale)
-                        .size(width = 46.dp, height = 32.dp)
+                        .size(width = 40.dp, height = 30.dp)
                         .clip(CircleShape)
                         .then(
                             if (selected) {
@@ -113,7 +114,8 @@ fun DhikrNavBar(
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = destination.label,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    maxLines = 1,
                     color = if (selected) {
                         MaterialTheme.colorScheme.primary
                     } else {

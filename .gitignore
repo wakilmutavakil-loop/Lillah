@@ -24,3 +24,7 @@ keystore.properties
 *.jks
 *.keystore
 !signing/dhikr-upgrade.jks
+
+# Backend project credentials (Firebase / Google / Facebook). Never committed;
+# see backend/README.md for how to produce this file.
+backend.properties

@@ -1,10 +1,14 @@
 package com.lillah.dhikr.data.repository
 
+import androidx.room.withTransaction
 import com.lillah.dhikr.core.time.AppClock
+import com.lillah.dhikr.data.local.DhikrDatabase
 import com.lillah.dhikr.data.local.dao.CollectionDao
 import com.lillah.dhikr.data.local.dao.CountDao
 import com.lillah.dhikr.data.local.dao.CounterDao
 import com.lillah.dhikr.data.local.dao.DhikrDao
+import com.lillah.dhikr.data.local.dao.SyncDao
+import com.lillah.dhikr.data.local.entity.SyncOperationEntity
 import com.lillah.dhikr.data.local.toDomain
 import com.lillah.dhikr.data.local.toEntity
 import com.lillah.dhikr.data.seed.SeedData
@@ -12,6 +16,8 @@ import com.lillah.dhikr.domain.model.CollectionKind
 import com.lillah.dhikr.domain.model.CollectionProgress
 import com.lillah.dhikr.domain.model.Dhikr
 import com.lillah.dhikr.domain.model.DhikrCollection
+import com.lillah.dhikr.domain.sync.SyncOperationKind
+import com.lillah.dhikr.domain.sync.SyncState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -20,6 +26,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 
 /** Outcome of a single tap, so the UI knows whether to celebrate. */
 data class CountResult(
@@ -30,10 +37,12 @@ data class CountResult(
 )
 
 class DhikrRepository(
+    private val database: DhikrDatabase,
     private val dhikrDao: DhikrDao,
     private val collectionDao: CollectionDao,
     private val countDao: CountDao,
     private val counterDao: CounterDao,
+    private val syncDao: SyncDao,
     private val clock: AppClock,
 ) {
 
@@ -121,8 +130,13 @@ class DhikrRepository(
         val completed = next >= target
         val rounds = if (completed) roundsToday + 1 else roundsToday
 
-        dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
-        countDao.addCount(dhikrId, today, delta, now)
+        // One transaction: the ledger and the outbox entry are either both durable or neither
+        // is. A count that reached the device but not the queue would never reach the cloud.
+        database.withTransaction {
+            dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
+            countDao.addCount(dhikrId, today, delta, now)
+            syncDao.enqueue(countOperation(entity.id, entity.name, today, delta.toLong(), now))
+        }
         counterDao.raiseTo(CounterKeys.BEST_SESSION, next.toLong())
 
         CountResult(next, target, completed, rounds)
@@ -152,10 +166,34 @@ class DhikrRepository(
             stepped to rolledBack
         }
 
-        dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
-        countDao.addCount(dhikrId, today, -1, now)
+        database.withTransaction {
+            dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
+            countDao.addCount(dhikrId, today, -1, now)
+            syncDao.enqueue(countOperation(entity.id, entity.name, today, -1L, now))
+        }
         CountResult(next, target, false, rounds)
     }
+
+    /**
+     * A queued contribution. The id is a fresh UUID that also becomes the remote document id, so
+     * a retried upload lands on the same document and is folded into the totals exactly once.
+     */
+    private fun countOperation(
+        dhikrId: Long,
+        dhikrName: String,
+        epochDay: Long,
+        delta: Long,
+        now: Long,
+    ) = SyncOperationEntity(
+        opId = UUID.randomUUID().toString(),
+        kind = SyncOperationKind.COUNT_DELTA.name,
+        dhikrId = dhikrId,
+        dhikrName = dhikrName,
+        epochDay = epochDay,
+        delta = delta,
+        createdAt = now,
+        state = SyncState.PENDING.name,
+    )
 
     /** Clears the live round only. Today's recorded total is history and is left alone. */
     suspend fun resetRound(dhikrId: Long) = dhikrDao.resetRound(dhikrId)

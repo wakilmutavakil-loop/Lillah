@@ -6,11 +6,18 @@ import com.lillah.dhikr.core.media.CounterSounds
 import com.lillah.dhikr.core.media.CoverImageStore
 import com.lillah.dhikr.core.time.AppClock
 import com.lillah.dhikr.core.time.SystemAppClock
+import com.lillah.dhikr.data.backend.AuthGateway
+import com.lillah.dhikr.data.backend.BackendFactory
+import com.lillah.dhikr.data.backend.DhikrBackend
+import com.lillah.dhikr.data.backend.UnconfiguredAuthGateway
+import com.lillah.dhikr.data.backend.UnconfiguredBackend
 import com.lillah.dhikr.data.local.DhikrDatabase
+import com.lillah.dhikr.data.prefs.AccountRepository
 import com.lillah.dhikr.data.prefs.SettingsRepository
 import com.lillah.dhikr.data.repository.DhikrRepository
 import com.lillah.dhikr.data.repository.GamificationRepository
 import com.lillah.dhikr.data.repository.StatsRepository
+import com.lillah.dhikr.data.repository.SyncRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
@@ -28,14 +35,27 @@ class AppContainer(private val context: Context) {
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(context) }
 
+    val accountRepository: AccountRepository by lazy { AccountRepository(context) }
+
+    /**
+     * Resolved once at startup. A build without backend credentials gets the unconfigured pair,
+     * which behaves like a permanently offline device — a state the sync engine already handles,
+     * so nothing above this line needs to know the difference.
+     */
+    val backend: DhikrBackend by lazy { BackendFactory.createBackend(context) }
+
+    val authGateway: AuthGateway by lazy { BackendFactory.createAuthGateway(context) }
+
     private val database: DhikrDatabase by lazy { DhikrDatabase.build(context) }
 
     val dhikrRepository: DhikrRepository by lazy {
         DhikrRepository(
+            database = database,
             dhikrDao = database.dhikrDao(),
             collectionDao = database.collectionDao(),
             countDao = database.countDao(),
             counterDao = database.counterDao(),
+            syncDao = database.syncDao(),
             clock = clock,
         )
     }
@@ -50,6 +70,16 @@ class AppContainer(private val context: Context) {
             counterDao = database.counterDao(),
             countDao = database.countDao(),
             dhikrRepository = dhikrRepository,
+            clock = clock,
+        )
+    }
+
+    val syncRepository: SyncRepository by lazy {
+        SyncRepository(
+            syncDao = database.syncDao(),
+            countDao = database.countDao(),
+            accountRepository = accountRepository,
+            backend = backend,
             clock = clock,
         )
     }

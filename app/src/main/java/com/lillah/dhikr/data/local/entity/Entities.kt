@@ -120,7 +120,8 @@ data class SyncOperationEntity(
     val dhikrId: Long? = null,
     val dhikrName: String? = null,
     val epochDay: Long,
-    val delta: Int,
+    /** Long, not Int: a baseline claim carries a whole history in one operation. */
+    val delta: Long,
     val createdAt: Long,
     /** Matches a [com.lillah.dhikr.domain.sync.SyncState] name. */
     val state: String,

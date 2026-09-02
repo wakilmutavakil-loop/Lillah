@@ -20,6 +20,39 @@ android {
         versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
+
+        // Backend credentials come from a gitignored backend.properties (see backend/README.md).
+        // Absent, the app builds and runs as a purely local counter; present, it gains accounts,
+        // sync and the Universal Dhikr board. Nothing here is baked into version control.
+        val backendPropertiesFile = rootProject.file("backend.properties")
+        val backend = Properties().apply {
+            if (backendPropertiesFile.exists()) {
+                backendPropertiesFile.inputStream().use { load(it) }
+            }
+        }
+        fun backendValue(key: String): String = backend.getProperty(key).orEmpty()
+
+        buildConfigField("String", "FIREBASE_API_KEY", "\"${backendValue("firebaseApiKey")}\"")
+        buildConfigField("String", "FIREBASE_APP_ID", "\"${backendValue("firebaseAppId")}\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${backendValue("firebaseProjectId")}\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${backendValue("firebaseSenderId")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${backendValue("googleWebClientId")}\"")
+        buildConfigField("String", "FACEBOOK_APP_ID", "\"${backendValue("facebookAppId")}\"")
+        buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${backendValue("facebookClientToken")}\"")
+
+        // The Facebook SDK reads these from resources. Placeholders keep the manifest valid in a
+        // build with no Facebook app; auto-init is off, so the SDK never sees them.
+        resValue("string", "facebook_app_id", backendValue("facebookAppId").ifBlank { "0" })
+        resValue(
+            "string",
+            "facebook_client_token",
+            backendValue("facebookClientToken").ifBlank { "0" },
+        )
+        resValue(
+            "string",
+            "fb_login_protocol_scheme",
+            backendValue("facebookAppId").ifBlank { "0" }.let { "fb$it" },
+        )
     }
 
     // Signing has two jobs here, in priority order.
@@ -92,6 +125,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {
@@ -138,6 +172,15 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.coil.compose)
     implementation(libs.androidx.exifinterface)
+
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    implementation(libs.kotlinx.coroutines.play.services)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.google.id)
+    implementation(libs.facebook.login)
 
     debugImplementation(libs.androidx.ui.tooling)
 

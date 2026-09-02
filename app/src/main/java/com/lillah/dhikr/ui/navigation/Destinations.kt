@@ -9,6 +9,8 @@ import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.RadioButtonChecked
 import androidx.compose.material.icons.outlined.RadioButtonChecked
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ViewCarousel
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -19,6 +21,7 @@ object Routes {
     const val PROGRESS = "progress"
     const val GUIDE = "guide"
     const val SETTINGS = "settings"
+    const val UNIVERSAL = "universal"
 
     const val COLLECTION_DETAIL = "collection/{collectionId}"
     const val DHIKR_EDITOR = "dhikr_editor?dhikrId={dhikrId}&collectionId={collectionId}"
@@ -47,6 +50,7 @@ enum class TopLevelDestination(
     Home(Routes.HOME, "Count", Icons.Rounded.RadioButtonChecked, Icons.Outlined.RadioButtonChecked),
     Collections(Routes.COLLECTIONS, "Adhkar", Icons.Rounded.ViewCarousel, Icons.Outlined.ViewCarousel),
     Progress(Routes.PROGRESS, "Progress", Icons.Rounded.Insights, Icons.Outlined.Insights),
+    Universal(Routes.UNIVERSAL, "World", Icons.Rounded.Public, Icons.Outlined.Public),
     Guide(Routes.GUIDE, "Guide", Icons.Rounded.AutoStories, Icons.Outlined.AutoStories),
     Settings(Routes.SETTINGS, "Settings", Icons.Rounded.Settings, Icons.Outlined.Settings),
 }

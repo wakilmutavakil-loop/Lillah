@@ -111,6 +111,18 @@ class StatsRepository(
             .map { rows -> fillRange(start, end, rows) }
     }
 
+    /** Calendar year to date, re-anchored when the day rolls over. */
+    fun observeYearTotal(): Flow<Int> = today().flatMapLatest {
+        val start = clock.today().withDayOfYear(1)
+        val end = clock.today()
+        countDao.observeDayTotals(start.toEpochDay(), end.toEpochDay())
+            .map { rows -> rows.sumOf { it.total } }
+    }
+
+    fun observeMonthTotal(): Flow<Int> = observeMonth().map { it.total }
+
+    fun observeWeekTotal(): Flow<Int> = observeWeek().map { it.total }
+
     suspend fun todayTotal(): Int = countDao.dayTotal(clock.todayEpochDay())
 
     suspend fun clearToday() = countDao.clearDay(clock.todayEpochDay())

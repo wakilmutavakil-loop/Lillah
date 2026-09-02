@@ -46,8 +46,13 @@ interface SyncDao {
     )
     suspend fun markFailed(opIds: List<String>, error: String?, now: Long)
 
-    @Query("SELECT COALESCE(SUM(delta), 0) FROM sync_operations WHERE kind = 'BASELINE'")
-    suspend fun baselineTotal(): Long
+    /**
+     * Everything the outbox has ever carried for ordinary counting, synced or not. Subtracting it
+     * from the local lifetime total yields exactly the history that predates the outbox — the
+     * amount a device upgrading from v1.0.0 needs to claim once.
+     */
+    @Query("SELECT COALESCE(SUM(delta), 0) FROM sync_operations WHERE kind = 'COUNT_DELTA'")
+    suspend fun countDeltaTotal(): Long
 
     /**
      * Only ever called when the user explicitly asks to erase history. Sync state is never cleared

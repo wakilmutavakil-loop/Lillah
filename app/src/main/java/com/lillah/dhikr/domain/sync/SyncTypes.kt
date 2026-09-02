@@ -72,11 +72,23 @@ fun contributionPercent(userTotal: Long, globalTotal: Long): Double =
  * for most real users, so the precision follows the magnitude down to a floor that still reads as
  * a real contribution rather than as zero.
  */
-fun formatContributionPercent(percent: Double): String = when {
-    percent <= 0.0 -> "0%"
-    percent >= 10.0 -> String.format(java.util.Locale.getDefault(), "%.1f%%", percent)
-    percent >= 1.0 -> String.format(java.util.Locale.getDefault(), "%.2f%%", percent)
-    percent >= 0.01 -> String.format(java.util.Locale.getDefault(), "%.4f%%", percent)
-    percent >= 0.00001 -> String.format(java.util.Locale.getDefault(), "%.5f%%", percent)
-    else -> "< 0.00001%"
+fun formatContributionPercent(percent: Double): String {
+    if (percent <= 0.0) return "0%"
+    val decimals = when {
+        percent >= 10.0 -> 1
+        percent >= 1.0 -> 2
+        percent >= 0.01 -> 4
+        percent >= 0.00001 -> 5
+        else -> return "< 0.00001%"
+    }
+    // Trailing zeros are noise on a figure this small: a share of 0.0015% should read as
+    // 0.0015%, not 0.00150%.
+    val rendered = String.format(java.util.Locale.getDefault(), "%.${decimals}f", percent)
+    val separator = java.text.DecimalFormatSymbols.getInstance().decimalSeparator
+    val trimmed = if (rendered.contains(separator)) {
+        rendered.trimEnd('0').trimEnd(separator)
+    } else {
+        rendered
+    }
+    return "$trimmed%"
 }
