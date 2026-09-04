@@ -3,7 +3,7 @@
 A digital tasbih and daily remembrance app for Android. Offline-first, and built so that keeping
 a habit feels better than breaking one.
 
-<sub>Package `com.lillah.dhikr` · v1.2.0 (versionCode 3) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
+<sub>Package `com.lillah.dhikr` · v1.3.0 (versionCode 4) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
 
 ---
 
@@ -64,20 +64,22 @@ only way to remove anything, and that is the operating system's doing, not the a
 
 ## Upgrading
 
-Installing v1.2.0 over v1.0.0 **or** v1.1.0 is an ordinary update. There is no uninstall step, and
+Installing v1.3.0 over any earlier version is an ordinary update. There is no uninstall step, and
 nothing is reset. Three things make that true, and all three are verified against the built APK
 rather than assumed:
 
 | | |
 | --- | --- |
 | **Same package id** | `com.lillah.dhikr`, unchanged since v1.0.0 |
-| **Higher versionCode** | 1 → 2 → 3 |
+| **Higher versionCode** | 1 → 2 → 3 → 4 |
 | **Same signing key** | SHA-256 `35:DA:2A:FB…`, identical to the released v1.0.0 APK |
 
-Both migrations are additive. Version 2 added two tables. Version 3 adds profiles and a
+Every migration is additive. Version 2 added two tables. Version 3 adds profiles and a
 `profileId` column defaulting to 1 — the device profile, which the migration creates and which
 every existing row therefore already belongs to. Nobody's history moves, because there is only one
 profile for it to be in.
+
+Version 4 adds one table recording what the world count was last told, and alters nothing.
 
 Achievements and counters needed a composite key, and SQLite cannot add one without rebuilding the
 table. Rather than rebuild a table holding user data, their rows are **copied** into new
@@ -186,7 +188,19 @@ sign-ins not duplicating profiles, and milestones not being inherited.
 
 Counting is local and immediate; the network is downstream of it and never in the way.
 
-Only numbers are uploaded — a count and a date. Which dhikr somebody said, and how often, never
+Connecting publishes **one absolute running total**, in one document write, however much was
+counted in between. That single choice settles three things at once:
+
+- **It cannot double count.** Writing the same total twice leaves the cloud where it was. There is
+  no idempotency key to get wrong, because nothing is being added.
+- **It cannot lose anything.** What is still owed to the world count is not a queue that could be
+  dropped — it is the difference between the device's lifetime total and the figure last accepted.
+  A device that has never connected reports its whole history as waiting, with no migration step
+  needed to discover that.
+- **It costs one write.** An earlier design uploaded a document per counted tap, which would have
+  exhausted a free Firestore quota at roughly fifty active people.
+
+Only numbers are uploaded — a total and a date. Which dhikr somebody said, and how often, never
 leaves the device.
 
 Every count writes two rows in **one transaction**: the day ledger, and an append-only operation in
@@ -214,10 +228,15 @@ rather than its own.
 
 ### Backend
 
-Firestore, with Cloud Functions folding operations into per-user and worldwide totals. Clients
-write only immutable operation documents; totals and the global aggregate are closed to client
-writes by the security rules, so nobody can set their own total — or anybody else's. A nightly job
-recomputes the worldwide figure from the per-user totals and repairs any drift.
+Firestore, and nothing else — no server code, no scheduled jobs, no billing plan. The entire cloud
+is one collection of `contributions/{uid}` documents holding a number, and the worldwide figure is
+a server-side `sum()` across it.
+
+That replaced a Cloud Function maintaining a single global counter, for two reasons: Firestore
+sustains only about one write per second to any one document, so a shared counter contends and
+fails long before the app gets interesting; and summing on read is billed per thousand entries
+scanned, so the worldwide total costs a handful of reads at any scale. The rules let a signed-in
+person write exactly one document — their own — and never lower it.
 
 Setup, data layout and the rules are documented in [`backend/README.md`](backend/README.md).
 
@@ -276,7 +295,7 @@ the rest.
 ```bash
 ./gradlew :app:assembleDebug     # debug APK
 ./gradlew :app:assembleRelease   # release APK, R8-shrunk (~4 MB)
-./gradlew :app:testDebugUnitTest # 97 unit, migration, profile, sync and screen tests
+./gradlew :app:testDebugUnitTest # 99 unit, migration, profile, sync and screen tests
 ```
 
 Cloud features need a `backend.properties`; see [`backend/README.md`](backend/README.md). Without
@@ -301,15 +320,16 @@ keyPassword=...
 
 ## Tests
 
-97 tests, all JVM — no device or emulator needed.
+99 tests, all JVM — no device or emulator needed.
 
 - **Migration** — real v1 and v2 databases, built from the released schemas' own DDL and identity
   hashes, upgraded and read back through the production DAOs. See "Upgrading" above.
 - **Profiles** — adoption, isolation between people sharing a phone, switching accounts, and
   seeding.
-- **Sync** — an in-memory database against a fake backend that keys operations by id the way
-  Firestore does: retries do not double count, a failed push keeps every operation queued, signing
-  out leaves the queue intact, and the baseline claim is idempotent across repeated sign-ins.
+- **Sync** — an in-memory database against a fake backend shaped like the real collection: a
+  thousand dhikr cost one write, connecting six times does not inflate the total, a failed connect
+  leaves the counting untouched and still owed, and two people on one phone publish separately
+  without either total absorbing the other.
 - **Contribution maths** — the share calculation and its formatting, including the small
   percentages the board actually shows.
 

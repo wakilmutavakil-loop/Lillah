@@ -11,7 +11,6 @@ import com.lillah.dhikr.data.repository.DhikrRepository
 import com.lillah.dhikr.data.repository.ProfileRepository
 import com.lillah.dhikr.data.repository.SyncRepository
 import com.lillah.dhikr.domain.sync.AuthMethod
-import com.lillah.dhikr.domain.sync.SyncOperationKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -19,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -109,174 +109,190 @@ class SyncRepositoryTest {
     private suspend fun count(times: Int) = repeat(times) { dhikrRepository.increment(1) }
 
     @Test
-    fun `each count queues exactly one operation`() = runBlocking {
+    fun `every count is still recorded locally`() = runBlocking {
         count(10)
-        val pending = database.syncDao().pending(DEVICE)
-        assertEquals(10, pending.size)
-        assertEquals("operation ids must be unique", 10, pending.map { it.opId }.toSet().size)
-        assertTrue(pending.all { it.kind == SyncOperationKind.COUNT_DELTA.name })
-        assertEquals(10L, database.syncDao().observePendingTotal(DEVICE).first())
+        assertEquals(10L, database.countDao().lifetimeTotal(DEVICE))
+        assertEquals(
+            "the device keeps its own record of each count regardless of syncing",
+            10,
+            database.syncDao().pending(DEVICE).size,
+        )
     }
 
     @Test
-    fun `an undo queues a compensating operation rather than removing one`() = runBlocking {
+    fun `an undo lowers the local total`() = runBlocking {
         count(5)
         dhikrRepository.decrement(1)
-
-        val pending = database.syncDao().pending(DEVICE)
-        assertEquals("nothing is ever removed from the outbox", 6, pending.size)
-        assertEquals(4L, database.syncDao().observePendingTotal(DEVICE).first())
         assertEquals(4L, database.countDao().lifetimeTotal(DEVICE))
     }
 
     @Test
-    fun `counting offline then syncing uploads the exact total`() = runBlocking {
+    fun `counting offline then connecting publishes the exact total`() = runBlocking {
         signIn()
         count(500)
         assertEquals(500L, database.countDao().lifetimeTotal(DEVICE))
 
         assertTrue(syncRepository.syncNow().isSuccess)
 
-        assertEquals(500L, backend.serverUserTotal)
-        assertEquals(0, database.syncDao().pending(DEVICE).size)
+        assertEquals(500L, backend.worldTotal)
+        assertEquals(0L, syncRepository.status.first().pendingTotal)
     }
 
     @Test
-    fun `a failed push keeps every operation queued`() = runBlocking {
+    fun `a whole tasbih costs a single write`() = runBlocking {
         signIn()
-        count(120)
-        backend.failNextPush = java.io.IOException("network down")
+        count(1_000)
 
-        assertTrue(syncRepository.syncNow().isFailure)
-
-        assertEquals("a failure must never discard local work", 120, database.syncDao().pending(DEVICE).size)
-        assertEquals(120L, database.countDao().lifetimeTotal(DEVICE))
-        assertEquals(0L, backend.serverUserTotal)
-
-        // The retry succeeds and the total is right — not doubled by the earlier attempt.
         assertTrue(syncRepository.syncNow().isSuccess)
-        assertEquals(120L, backend.serverUserTotal)
-        assertEquals(0, database.syncDao().pending(DEVICE).size)
+
+        assertEquals(
+            "one thousand dhikr must not become one thousand uploads",
+            1,
+            backend.writeCount,
+        )
+        assertEquals(1_000L, backend.worldTotal)
     }
 
     @Test
-    fun `retrying a push cannot double count`() = runBlocking {
+    fun `connecting repeatedly cannot inflate the world total`() = runBlocking {
         signIn()
         count(50)
 
-        // Two full syncs, and a third after re-queueing everything as if confirmation was lost.
-        syncRepository.syncNow()
-        syncRepository.syncNow()
-        val ids = backend.accepted.keys.toList()
-        database.syncDao().markFailed(ids, "confirmation lost", 0)
-        syncRepository.syncNow()
-
-        assertEquals("the server keys by operation id, so duplicates collapse", 50L, backend.serverUserTotal)
-        assertTrue("the same ids really were pushed more than once", backend.pushAttempts.size > 1)
-    }
-
-    @Test
-    fun `existing history from before the outbox is claimed once`() = runBlocking {
-        // A device upgrading from v1.0.0: counts in the ledger, nothing in the outbox.
-        database.countDao().addCount(dhikrId = 1, epochDay = 19_000, delta = 25_000, now = 0)
-        assertEquals(25_000L, database.countDao().lifetimeTotal(DEVICE))
-        assertEquals(0, database.syncDao().pending(DEVICE).size)
-
-        signIn()
-        syncRepository.claimExistingHistory()
-
-        val baseline = database.syncDao().pending(DEVICE).single()
-        assertEquals(SyncOperationKind.BASELINE.name, baseline.kind)
-        assertEquals(25_000L, baseline.delta)
-
-        assertTrue(syncRepository.syncNow().isSuccess)
-        assertEquals(25_000L, backend.serverUserTotal)
-    }
-
-    @Test
-    fun `claiming history repeatedly stays at one operation`() = runBlocking {
-        database.countDao().addCount(dhikrId = 1, epochDay = 19_000, delta = 12_500, now = 0)
-        signIn()
-
-        repeat(5) { syncRepository.claimExistingHistory() }
-        syncRepository.syncNow()
-        repeat(5) { syncRepository.claimExistingHistory() }
-        syncRepository.syncNow()
+        repeat(6) { syncRepository.syncNow() }
 
         assertEquals(
-            "12,500 before the upgrade must still be 12,500 after it",
-            12_500L,
-            backend.serverUserTotal,
+            "an absolute total written six times is still that total",
+            50L,
+            backend.worldTotal,
         )
     }
 
     @Test
-    fun `the baseline excludes counts already queued after the upgrade`() = runBlocking {
-        database.countDao().addCount(dhikrId = 1, epochDay = 19_000, delta = 25_000, now = 0)
-        count(500) // counted after upgrading, before signing in — already in the outbox
-
+    fun `a failed connect keeps the counting and keeps it owed`() = runBlocking {
         signIn()
-        syncRepository.claimExistingHistory()
+        count(120)
+        backend.failNextPublish = java.io.IOException("network down")
+
+        assertTrue(syncRepository.syncNow().isFailure)
+
+        assertEquals("a failure must never touch what was counted", 120L, database.countDao().lifetimeTotal(DEVICE))
+        assertEquals(0L, backend.worldTotal)
+        assertEquals(120L, syncRepository.status.first().pendingTotal)
+
+        // Retrying settles it, at the right figure rather than a doubled one.
         assertTrue(syncRepository.syncNow().isSuccess)
+        assertEquals(120L, backend.worldTotal)
+        assertEquals(0L, syncRepository.status.first().pendingTotal)
+    }
+
+    @Test
+    fun `history counted before ever connecting is owed in full`() = runBlocking {
+        // A device upgrading from an older version: counts in the ledger, never synced.
+        database.countDao().addCount(dhikrId = 1, epochDay = 19_000, delta = 25_000, now = 0)
+        signIn()
 
         assertEquals(
-            "history plus post-upgrade counting, each counted once",
-            25_500L,
-            backend.serverUserTotal,
+            "nothing had to be migrated for the whole history to be waiting",
+            25_000L,
+            syncRepository.status.first().pendingTotal,
         )
+
+        assertTrue(syncRepository.syncNow().isSuccess)
+        assertEquals(25_000L, backend.worldTotal)
+    }
+
+    @Test
+    fun `counting after a connect only owes the difference`() = runBlocking {
+        database.countDao().addCount(dhikrId = 1, epochDay = 19_000, delta = 25_000, now = 0)
+        signIn()
+        syncRepository.syncNow()
+
+        count(500)
+
+        assertEquals(500L, syncRepository.status.first().pendingTotal)
+        assertTrue(syncRepository.syncNow().isSuccess)
+        assertEquals(25_500L, backend.worldTotal)
         assertEquals(25_500L, database.countDao().lifetimeTotal(DEVICE))
     }
 
     @Test
-    fun `signing out leaves the queue and the history alone`() = runBlocking {
+    fun `a lost read-back still counts as a successful contribution`() = runBlocking {
+        signIn()
+        count(40)
+        backend.failNextFetch = java.io.IOException("read failed")
+
+        assertTrue(
+            "the contribution landed; only the world figure could not be read",
+            syncRepository.syncNow().isSuccess,
+        )
+        assertEquals(40L, backend.worldTotal)
+        assertEquals(0L, syncRepository.status.first().pendingTotal)
+    }
+
+    @Test
+    fun `signing out leaves everything owed and nothing lost`() = runBlocking {
         signIn()
         count(30)
-        backend.failNextPush = java.io.IOException("offline")
+        backend.failNextPublish = java.io.IOException("offline")
         syncRepository.syncNow()
 
         accountRepository.clearSignedIn()
 
-        assertEquals(30, database.syncDao().pending(DEVICE).size)
         assertEquals(30L, database.countDao().lifetimeTotal(DEVICE))
         assertFalse(accountRepository.state.first().isSignedIn)
 
-        // Signing back in finds the work still waiting.
         signIn()
         assertTrue(syncRepository.syncNow().isSuccess)
-        assertEquals(30L, backend.serverUserTotal)
+        assertEquals(30L, backend.worldTotal)
     }
 
     @Test
-    fun `syncing without an account is refused without touching the queue`() = runBlocking {
+    fun `connecting without an account is refused without touching anything`() = runBlocking {
         count(7)
         assertTrue(syncRepository.syncNow().isFailure)
-        assertEquals(7, database.syncDao().pending(DEVICE).size)
-        assertEquals(0L, backend.serverUserTotal)
+        assertEquals(7L, database.countDao().lifetimeTotal(DEVICE))
+        assertEquals(0L, backend.worldTotal)
     }
 
     @Test
-    fun `status reports what is still waiting`() = runBlocking {
+    fun `status reports what is still owed to the world count`() = runBlocking {
         signIn()
         count(42)
 
         val status = syncRepository.status.first()
         assertTrue(status.signedIn)
         assertTrue(status.hasPending)
-        assertEquals(42, status.pendingOperations)
         assertEquals(42L, status.pendingTotal)
     }
 
     @Test
-    fun `a synced batch is marked so it is not uploaded again`() = runBlocking {
-        signIn()
-        count(20)
-        syncRepository.syncNow()
+    fun `two people on one phone publish separately`() = runBlocking {
+        // The device profile counts, then the first account signs in and adopts it.
+        count(300)
+        val first = profileRepository.onSignedIn(
+            com.lillah.dhikr.domain.sync.AuthUser("uid-a", "Aisha", null, null, AuthMethod.Google)
+        )
+        assertEquals("the first account adopts the device profile", 1L, first.profileId)
+        accountRepository.setSignedIn("uid-a", "Aisha", null, null, AuthMethod.Google)
+        assertTrue(syncRepository.syncNow().isSuccess)
+        assertEquals(300L, backend.contributions["uid-a"])
 
-        assertEquals(0, database.syncDao().pending(DEVICE).size)
-        assertEquals(0L, database.syncDao().observePendingTotal(DEVICE).first())
-        // Synced rows stay in the table, marked, rather than being deleted: the record of what
-        // was contributed is what makes the baseline calculation correct later.
-        assertEquals(20L, database.syncDao().countDeltaTotal(DEVICE))
-        assertEquals(20, backend.accepted.size)
+        // A second profile on the same phone, signed in as somebody else.
+        val second = profileRepository.onSignedIn(
+            com.lillah.dhikr.domain.sync.AuthUser("uid-b", "Bilal", null, null, AuthMethod.Google)
+        )
+        assertNotEquals("a second person gets their own profile", 1L, second.profileId)
+        accountRepository.setSignedIn("uid-b", "Bilal", null, null, AuthMethod.Google)
+        database.dhikrDao().insert(
+            com.lillah.dhikr.data.local.entity.DhikrEntity(
+                id = 2, name = "Alhamdulillah", createdAt = 0, profileId = second.profileId,
+            )
+        )
+        repeat(70) { dhikrRepository.increment(2) }
+        assertTrue(syncRepository.syncNow().isSuccess)
+
+        assertEquals(70L, backend.contributions["uid-b"])
+        assertEquals("neither total absorbed the other", 300L, backend.contributions["uid-a"])
+        assertEquals(370L, backend.worldTotal)
     }
 }

@@ -180,8 +180,8 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
                         method = user.method ?: method,
                     )
                     dhikrRepository.seedIfEmpty(resolution.profileId)
-                    syncRepository.registerUser(user)
-                    syncRepository.claimExistingHistory()
+                    // Nothing to claim or migrate: the first upload is this device's whole
+                    // lifetime total, so existing history joins the world count on its own.
                     syncRepository.syncNow()
                 }
                 .onFailure { error ->

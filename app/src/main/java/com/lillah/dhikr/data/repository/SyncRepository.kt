@@ -6,12 +6,9 @@ import com.lillah.dhikr.data.backend.DhikrBackend
 import com.lillah.dhikr.data.local.dao.CountDao
 import com.lillah.dhikr.data.local.dao.SyncDao
 import com.lillah.dhikr.data.local.entity.RemoteSnapshotEntity
-import com.lillah.dhikr.data.local.entity.SyncOperationEntity
+import com.lillah.dhikr.data.local.entity.ProfileSyncStateEntity
 import com.lillah.dhikr.data.prefs.AccountRepository
-import com.lillah.dhikr.domain.sync.AuthUser
 import com.lillah.dhikr.domain.sync.RemoteFigures
-import com.lillah.dhikr.domain.sync.SyncOperationKind
-import com.lillah.dhikr.domain.sync.SyncState
 import com.lillah.dhikr.domain.sync.SyncStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -27,21 +24,31 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-object NotSignedIn : Exception("Sign in to sync your dhikr to your account.")
+object NotSignedIn : Exception("Sign in to add your dhikr to the world count.")
 
 /**
- * Moves queued operations to the cloud, and cloud figures back.
+ * Adds this device's contribution to the worldwide figure, and reads that figure back.
  *
- * Three rules shape everything here:
+ * The design is deliberately small. Counting is local and already safe; the network exists only to
+ * publish one number and fetch another. So a connect is:
  *
- *  - A local count is never contingent on the network. Counting writes to the outbox and returns;
- *    this class drains it whenever it can, and failing to drain it is not an error the user needs
- *    to act on.
- *  - Nothing is ever discarded. A failed push increments an attempt counter and stays queued.
- *    There is no path in this file that deletes an unsynced operation.
- *  - Uploads are idempotent. Every operation carries a client-generated id that the backend uses
- *    as its document id, so a retry after a timeout re-writes the same document rather than
- *    adding a second contribution.
+ *  1. read the lifetime total from the device,
+ *  2. write it to the cloud as an absolute figure,
+ *  3. remember what was accepted,
+ *  4. read the worldwide total back.
+ *
+ * **One document write, however much was counted in between.** An earlier version uploaded a
+ * document per tap, which cost a hundred writes for a hundred dhikr and would have exhausted a
+ * free Firestore quota at about fifty active people. This costs the same whether somebody counted
+ * three or three thousand.
+ *
+ * **Retrying cannot double count**, because nothing is being added — the same total written twice
+ * leaves the cloud where it already was. There is no idempotency key to get wrong.
+ *
+ * **Nothing is ever lost by a failure.** What is still owed to the world count is not a queue that
+ * could be dropped; it is the arithmetic difference between the device's lifetime total and the
+ * figure the cloud last accepted. A device that has never connected therefore reports its entire
+ * history as waiting, with no bookkeeping required to discover that.
  */
 class SyncRepository(
     private val syncDao: SyncDao,
@@ -57,24 +64,34 @@ class SyncRepository(
     private val syncMutex = Mutex()
     private val syncing = MutableStateFlow(false)
 
+    /** Counted here but not yet reflected in the worldwide figure. */
+    private val pendingTotal: Flow<Long> = profiles.activeProfileId.flatMapLatest { pid ->
+        combine(
+            countDao.observeLifetimeTotal(pid),
+            syncDao.observeSyncState(pid),
+        ) { lifetime, state ->
+            (lifetime - (state?.lastUploadedTotal ?: 0L)).coerceAtLeast(0L)
+        }
+    }
+
     val status: Flow<SyncStatus> = combine(
         accountRepository.state,
-        profiles.activeProfileId.flatMapLatest { syncDao.observePendingCount(it) },
-        profiles.activeProfileId.flatMapLatest { syncDao.observePendingTotal(it) },
+        pendingTotal,
         syncing,
-    ) { account, pending, pendingTotal, isSyncing ->
+    ) { account, pending, isSyncing ->
         SyncStatus(
             backendConfigured = backend.isConfigured,
             signedIn = account.isSignedIn,
             syncing = isSyncing,
-            pendingOperations = pending,
-            pendingTotal = pendingTotal,
+            // One connect settles everything, so "how many operations" is always one or none.
+            pendingOperations = if (pending > 0) 1 else 0,
+            pendingTotal = pending,
             lastSyncAt = account.lastSyncAt,
             lastError = account.lastSyncError,
         )
     }
 
-    /** Last known cloud figures, served from cache so the board renders offline. */
+    /** Last known worldwide figures, served from cache so the board renders offline. */
     val cachedFigures: Flow<RemoteFigures?> = syncDao.observeSnapshot().map { snapshot ->
         snapshot?.let {
             RemoteFigures(
@@ -88,49 +105,10 @@ class SyncRepository(
     }
 
     /**
-     * Attributes history this device accumulated before it was ever attached to an account.
+     * Publishes this device's total and reads the worldwide figure back.
      *
-     * The amount is the local lifetime total minus everything the outbox has ever carried, which
-     * is precisely the counting that happened before this feature existed. It is queued as a
-     * single operation whose id is derived from the device, so running this again — on every
-     * sign-in, after a reinstall of the app, on a second sign-in to the same account — inserts
-     * nothing new and cannot double count.
-     */
-    suspend fun claimExistingHistory() {
-        val pid = profileId
-        val deviceId = accountRepository.deviceId()
-        val opId = baselineOpId(deviceId, pid)
-        if (syncDao.exists(opId)) return
-
-        val lifetime = countDao.lifetimeTotal(pid)
-        val alreadyQueued = syncDao.countDeltaTotal(pid)
-        val baseline = (lifetime - alreadyQueued).coerceAtLeast(0)
-        if (baseline <= 0) return
-
-        syncDao.enqueue(
-            SyncOperationEntity(
-                opId = opId,
-                kind = SyncOperationKind.BASELINE.name,
-                dhikrId = null,
-                dhikrName = null,
-                epochDay = clock.todayEpochDay(),
-                delta = baseline,
-                createdAt = clock.nowMillis(),
-                state = SyncState.PENDING.name,
-                profileId = pid,
-            )
-        )
-    }
-
-    suspend fun registerUser(user: AuthUser) {
-        backend.registerUser(user)
-    }
-
-    /**
-     * Drains the outbox, then refreshes the cached figures.
-     *
-     * Returns success when there was nothing to do, so callers can invoke it freely. A concurrent
-     * call returns immediately rather than queueing a second drain.
+     * Safe to call as often as you like: a concurrent call returns immediately, and a repeated
+     * one writes the same number again to no effect.
      */
     suspend fun syncNow(): Result<Unit> {
         if (!backend.isConfigured) return Result.failure(BackendUnavailable)
@@ -141,21 +119,33 @@ class SyncRepository(
         return syncMutex.withLock {
             syncing.value = true
             try {
-                drain(uid).onFailure { error ->
-                    accountRepository.recordSyncFailure(error.userMessage())
-                    return@withLock Result.failure(error)
-                }
+                val pid = profileId
+                val today = clock.todayEpochDay()
+                val now = clock.nowMillis()
+                val total = countDao.lifetimeTotal(pid)
+                val todayTotal = countDao.dayTotal(pid, today).toLong()
 
-                backend.fetchFigures(uid)
-                    .onSuccess { cache(it, uid) }
+                backend.publishContribution(uid, total, todayTotal, today)
                     .onFailure { error ->
-                        // The upload succeeded; only the read-back failed. Not worth reporting as
-                        // a sync failure, because nothing is at risk.
-                        accountRepository.recordSyncSuccess(clock.nowMillis())
+                        // The local record is untouched, and what is owed is still simply
+                        // (lifetime - lastUploaded). Nothing to recover, nothing to retry from.
+                        syncDao.markAttemptFailed(pid, error.userMessage(), now)
+                        accountRepository.recordSyncFailure(error.userMessage())
                         return@withLock Result.failure(error)
                     }
 
-                accountRepository.recordSyncSuccess(clock.nowMillis())
+                syncDao.putSyncState(ProfileSyncStateEntity(pid, total, now))
+                syncDao.markAllSynced(pid, uid, now)
+                accountRepository.recordSyncSuccess(now)
+
+                backend.fetchFigures(today)
+                    .onSuccess { cache(it) }
+                    .onFailure {
+                        // The contribution landed; only the read-back failed. Not worth reporting
+                        // as a sync failure, because nothing is outstanding.
+                        return@withLock Result.success(Unit)
+                    }
+
                 Result.success(Unit)
             } finally {
                 syncing.value = false
@@ -163,27 +153,13 @@ class SyncRepository(
         }
     }
 
-    private suspend fun drain(uid: String): Result<Unit> {
-        val pid = profileId
-        while (true) {
-            val batch = syncDao.pending(pid, BATCH_SIZE)
-            if (batch.isEmpty()) return Result.success(Unit)
-
-            val ids = batch.map { it.opId }
-            val result = backend.push(uid, batch)
-            val now = clock.nowMillis()
-
-            if (result.isFailure) {
-                // Stays queued. The attempt counter is what drives the backoff, and nothing here
-                // removes the operation, so an outage costs a delay and never a contribution.
-                syncDao.markFailed(ids, result.exceptionOrNull()?.userMessage(), now)
-                return Result.failure(result.exceptionOrNull() ?: BackendUnavailable)
-            }
-            syncDao.markSynced(ids, uid, now)
-        }
+    /** Refreshes the worldwide figures without publishing. Used when there is nothing to add. */
+    suspend fun refreshFigures(): Result<Unit> {
+        if (!backend.isConfigured) return Result.failure(BackendUnavailable)
+        return backend.fetchFigures(clock.todayEpochDay()).map { cache(it) }
     }
 
-    private suspend fun cache(figures: RemoteFigures, uid: String?) {
+    private suspend fun cache(figures: RemoteFigures) {
         syncDao.putSnapshot(
             RemoteSnapshotEntity(
                 id = 0,
@@ -191,15 +167,15 @@ class SyncRepository(
                 globalToday = figures.globalToday,
                 participantCount = figures.participantCount,
                 userTotal = figures.userTotal,
-                userUid = uid,
+                userUid = accountRepository.state.first().uid,
                 updatedAt = if (figures.updatedAt > 0) figures.updatedAt else clock.nowMillis(),
             )
         )
     }
 
     /**
-     * Background work for the app's lifetime: drain shortly after counting settles, retry on a
-     * slow loop while anything is queued, and keep the cached figures fresh from the live feed.
+     * Background work for the app's lifetime: publish shortly after counting settles, and retry
+     * on a slow loop while anything is still owed to the world count.
      */
     fun start(scope: CoroutineScope) {
         if (!backend.isConfigured) return
@@ -207,12 +183,12 @@ class SyncRepository(
         scope.launch {
             combine(
                 accountRepository.state.map { it.uid }.distinctUntilChanged(),
-                profiles.activeProfileId.flatMapLatest { syncDao.observePendingCount(it) },
+                pendingTotal,
             ) { uid, pending -> uid to pending }
                 .collectLatest { (uid, pending) ->
-                    if (uid == null || pending == 0) return@collectLatest
-                    // Let a burst of taps settle before uploading, so a tasbih of 100 is a
-                    // handful of batched writes rather than a hundred round trips.
+                    if (uid == null || pending <= 0) return@collectLatest
+                    // Let a burst of counting settle before publishing, so a tasbih of a hundred
+                    // is one upload rather than a hundred.
                     delay(SETTLE_MILLIS)
                     runCatching { syncNow() }
                 }
@@ -223,8 +199,8 @@ class SyncRepository(
             while (true) {
                 delay(backoff)
                 val account = accountRepository.state.first()
-                val pending = syncDao.pending(profileId, limit = 1)
-                if (account.uid == null || pending.isEmpty()) {
+                val owed = pendingTotal.first()
+                if (account.uid == null || owed <= 0) {
                     backoff = RETRY_FLOOR_MILLIS
                     continue
                 }
@@ -236,28 +212,18 @@ class SyncRepository(
                 }
             }
         }
-
-        scope.launch {
-            accountRepository.state.map { it.uid }.distinctUntilChanged().collectLatest { uid ->
-                backend.observeFigures(uid).collect { figures -> cache(figures, uid) }
-            }
-        }
     }
 
     companion object {
-        const val BATCH_SIZE = 200
         private const val SETTLE_MILLIS = 2_500L
         private const val RETRY_FLOOR_MILLIS = 30_000L
         private const val RETRY_CEILING_MILLIS = 15 * 60_000L
-
-        /** Scoped to the profile as well as the device: two people on one phone each claim once. */
-        fun baselineOpId(deviceId: String, profileId: Long) = "baseline-$deviceId-p$profileId"
     }
 }
 
 /** Exception text fit to show a user, without leaking a stack trace or an internal identifier. */
 internal fun Throwable.userMessage(): String = when (this) {
     is BackendUnavailable -> "Cloud sync is not set up in this build."
-    is NotSignedIn -> "Sign in to sync."
-    else -> message?.take(160) ?: "Sync could not complete."
+    is NotSignedIn -> "Sign in to add your dhikr to the world count."
+    else -> message?.take(160) ?: "Could not reach the world count."
 }

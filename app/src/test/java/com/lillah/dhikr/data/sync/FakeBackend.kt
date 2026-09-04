@@ -1,67 +1,59 @@
 package com.lillah.dhikr.data.sync
 
 import com.lillah.dhikr.data.backend.DhikrBackend
-import com.lillah.dhikr.data.local.entity.SyncOperationEntity
-import com.lillah.dhikr.domain.sync.AuthUser
 import com.lillah.dhikr.domain.sync.RemoteFigures
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.filterNotNull
 
 /**
- * Stands in for Firestore, and models the property that matters: the server keys operations by
- * their id, so pushing one twice must leave the totals unchanged.
+ * Stands in for Firestore, modelling the property that matters: a contribution is a document
+ * holding one absolute number, so writing it again simply overwrites it.
  */
 class FakeBackend(
     override val isConfigured: Boolean = true,
 ) : DhikrBackend {
 
-    /** Every operation the server has accepted, keyed by id — exactly like a document store. */
-    val accepted = linkedMapOf<String, SyncOperationEntity>()
+    /** uid to published total — exactly the shape of the real `contributions` collection. */
+    val contributions = linkedMapOf<String, Long>()
+    val todayTotals = linkedMapOf<String, Long>()
 
-    /** Every push attempt, including duplicates, so tests can assert on retry behaviour. */
-    val pushAttempts = mutableListOf<List<String>>()
+    /** Every write attempt, so a test can assert how many documents a sync actually costs. */
+    var writeCount = 0
+        private set
 
-    var failNextPush: Throwable? = null
-    var registeredUsers = mutableListOf<AuthUser>()
+    var failNextPublish: Throwable? = null
+    var failNextFetch: Throwable? = null
 
-    private val figures = MutableStateFlow<RemoteFigures?>(null)
+    /** What the server would compute: a sum across the collection. */
+    val worldTotal: Long get() = contributions.values.sum()
 
-    /** What the server would compute: the sum over distinct accepted operations. */
-    val serverUserTotal: Long get() = accepted.values.sumOf { it.delta }
-
-    override suspend fun push(
+    override suspend fun publishContribution(
         uid: String,
-        operations: List<SyncOperationEntity>,
+        total: Long,
+        todayTotal: Long,
+        todayEpochDay: Long,
     ): Result<Unit> {
-        pushAttempts += operations.map { it.opId }
-        failNextPush?.let {
-            failNextPush = null
+        failNextPublish?.let {
+            failNextPublish = null
             return Result.failure(it)
         }
-        operations.forEach { accepted[it.opId] = it }
-        figures.value = RemoteFigures(
-            globalTotal = serverUserTotal,
-            userTotal = serverUserTotal,
-            participantCount = 1,
-            updatedAt = 1_000L,
-        )
+        writeCount++
+        contributions[uid] = total
+        todayTotals[uid] = todayTotal
         return Result.success(Unit)
     }
 
-    override suspend fun registerUser(user: AuthUser): Result<Unit> {
-        registeredUsers += user
-        return Result.success(Unit)
-    }
-
-    override suspend fun fetchFigures(uid: String?): Result<RemoteFigures> = Result.success(
-        RemoteFigures(
-            globalTotal = serverUserTotal,
-            userTotal = serverUserTotal,
-            participantCount = 1,
-            updatedAt = 1_000L,
+    override suspend fun fetchFigures(todayEpochDay: Long): Result<RemoteFigures> {
+        failNextFetch?.let {
+            failNextFetch = null
+            return Result.failure(it)
+        }
+        return Result.success(
+            RemoteFigures(
+                globalTotal = worldTotal,
+                globalToday = todayTotals.values.sum(),
+                participantCount = contributions.size.toLong(),
+                userTotal = 0,
+                updatedAt = 1_000L,
+            )
         )
-    )
-
-    override fun observeFigures(uid: String?): Flow<RemoteFigures> = figures.filterNotNull()
+    }
 }

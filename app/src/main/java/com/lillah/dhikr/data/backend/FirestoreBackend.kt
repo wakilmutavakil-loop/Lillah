@@ -1,33 +1,30 @@
 package com.lillah.dhikr.data.backend
 
+import com.google.firebase.firestore.AggregateField
+import com.google.firebase.firestore.AggregateSource
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.SetOptions
-import com.google.firebase.firestore.memoryCacheSettings
 import com.google.firebase.firestore.persistentCacheSettings
-import com.lillah.dhikr.data.local.entity.SyncOperationEntity
-import com.lillah.dhikr.domain.sync.AuthUser
 import com.lillah.dhikr.domain.sync.RemoteFigures
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.tasks.await
 
 /**
- * Firestore implementation.
+ * Firestore, with no server code behind it.
  *
- * Layout:
+ * The whole cloud is one collection:
  * ```
- * users/{uid}                    profile, and server-maintained totals
- * users/{uid}/ops/{opId}         one immutable operation per counting action
- * aggregates/global              server-maintained worldwide totals
+ * contributions/{uid}   { total, todayTotal, todayEpochDay, updatedAt }
  * ```
  *
- * Clients only ever create operation documents. Totals are folded in by a Cloud Function and are
- * closed to client writes by the security rules, so nobody can set their own total — or anybody
- * else's — by writing to the database directly.
+ * A signed-in person may write exactly one document — their own — and it holds nothing but
+ * numbers. No name, no email, no record of which dhikr was said. The worldwide figure is a
+ * server-side `sum()` across that collection, so there is no counter document to maintain, nothing
+ * to keep consistent, and no single row for every device on earth to contend over.
+ *
+ * That last point is why this shape was chosen over an incrementing global counter: Firestore
+ * sustains about one write per second to any single document, which a shared counter would hit
+ * long before the app was interesting. Summing on read has no such ceiling.
  */
 class FirestoreBackend : DhikrBackend {
 
@@ -36,104 +33,65 @@ class FirestoreBackend : DhikrBackend {
     private val firestore: FirebaseFirestore by lazy {
         FirebaseFirestore.getInstance().apply {
             firestoreSettings = FirebaseFirestoreSettings.Builder()
-                // Firestore's own cache serves reads while offline, so the board still has
-                // figures to show when the network does not.
+                // Firestore's own cache answers reads while offline, so the last known worldwide
+                // figure survives a connection dropping mid-session.
                 .setLocalCacheSettings(persistentCacheSettings {})
                 .build()
         }
     }
 
-    override suspend fun push(
+    override suspend fun publishContribution(
         uid: String,
-        operations: List<SyncOperationEntity>,
+        total: Long,
+        todayTotal: Long,
+        todayEpochDay: Long,
     ): Result<Unit> = runCatching {
-        // The operation id is the document id. Re-uploading an operation therefore overwrites its
-        // own document rather than adding a second one, which is what makes a retry after a
-        // timeout safe: the aggregation function only ever folds a given document in once.
-        val batch = firestore.batch()
-        val ops = firestore.collection(USERS).document(uid).collection(OPS)
-        operations.forEach { operation ->
-            batch.set(
-                ops.document(operation.opId),
-                // Numbers only. Which dhikr was said, and how often, is nobody's business but
-                // the user's — that stays on the device. What leaves is a count and a date, which
-                // is the least the worldwide total can be built from.
-                mapOf(
-                    "kind" to operation.kind,
-                    "epochDay" to operation.epochDay,
-                    "delta" to operation.delta,
-                    "createdAt" to operation.createdAt,
-                ),
-                SetOptions.merge(),
-            )
-        }
-        batch.commit().await()
-        Unit
-    }
-
-    override suspend fun registerUser(user: AuthUser): Result<Unit> = runCatching {
-        firestore.collection(USERS).document(user.uid).set(
+        firestore.collection(CONTRIBUTIONS).document(uid).set(
             mapOf(
-                "provider" to user.method?.id,
-                "lastSeenAt" to System.currentTimeMillis(),
+                "total" to total,
+                "todayTotal" to todayTotal,
+                "todayEpochDay" to todayEpochDay,
+                "updatedAt" to System.currentTimeMillis(),
             ),
-            // Merge, so this never clobbers the server-maintained totals on the same document.
             SetOptions.merge(),
         ).await()
         Unit
     }
 
-    override suspend fun fetchFigures(uid: String?): Result<RemoteFigures> = runCatching {
-        val global = firestore.collection(AGGREGATES).document(GLOBAL).get().await()
-        val user = uid?.let { firestore.collection(USERS).document(it).get().await() }
+    override suspend fun fetchFigures(todayEpochDay: Long): Result<RemoteFigures> = runCatching {
+        val collection = firestore.collection(CONTRIBUTIONS)
+
+        // Aggregations are computed by the server and billed per thousand entries scanned, so the
+        // worldwide total costs a handful of reads however many people are counting.
+        val worldwide = collection
+            .aggregate(AggregateField.sum(FIELD_TOTAL), AggregateField.count())
+            .get(AggregateSource.SERVER)
+            .await()
+
+        val today = collection
+            .whereEqualTo(FIELD_TODAY_DAY, todayEpochDay)
+            .aggregate(AggregateField.sum(FIELD_TODAY_TOTAL))
+            .get(AggregateSource.SERVER)
+            .await()
+
         RemoteFigures(
-            globalTotal = global.getLong("total") ?: 0,
-            globalToday = global.getLong("todayTotal") ?: 0,
-            participantCount = global.getLong("participantCount") ?: 0,
-            userTotal = user?.getLong("total") ?: 0,
-            updatedAt = global.getLong("updatedAt") ?: System.currentTimeMillis(),
+            globalTotal = worldwide.longOf(AggregateField.sum(FIELD_TOTAL)),
+            globalToday = today.longOf(AggregateField.sum(FIELD_TODAY_TOTAL)),
+            participantCount = worldwide.count,
+            userTotal = 0, // The device is the authority on the user's own figure.
+            updatedAt = System.currentTimeMillis(),
         )
     }
 
-    override fun observeFigures(uid: String?): Flow<RemoteFigures> {
-        val globalFlow = documentFlow(firestore.collection(AGGREGATES).document(GLOBAL))
-        val userFlow = if (uid == null) {
-            flowOf(emptyMap())
-        } else {
-            documentFlow(firestore.collection(USERS).document(uid))
-        }
-        return combine(globalFlow, userFlow) { global, user ->
-            RemoteFigures(
-                globalTotal = global.longOr("total"),
-                globalToday = global.longOr("todayTotal"),
-                participantCount = global.longOr("participantCount"),
-                userTotal = user.longOr("total"),
-                updatedAt = global.longOr("updatedAt").takeIf { it > 0 }
-                    ?: System.currentTimeMillis(),
-            )
-        }
-    }
-
-    private fun documentFlow(
-        reference: com.google.firebase.firestore.DocumentReference,
-    ): Flow<Map<String, Any?>> = callbackFlow {
-        val registration = reference.addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                // A listener error is not fatal: the cached snapshot stays on screen and the
-                // periodic sync will refresh it. Closing the flow would kill live updates.
-                return@addSnapshotListener
-            }
-            trySend(snapshot?.data.orEmpty())
-        }
-        awaitClose { registration.remove() }
-    }
-
-    private fun Map<String, Any?>.longOr(key: String): Long = (this[key] as? Number)?.toLong() ?: 0
+    /** `sum()` comes back as a Number whose concrete type Firestore does not promise. */
+    private fun com.google.firebase.firestore.AggregateQuerySnapshot.longOf(
+        field: AggregateField,
+    ): Long = (get(field) as? Number)?.toLong() ?: 0L
 
     private companion object {
-        const val USERS = "users"
-        const val OPS = "ops"
-        const val AGGREGATES = "aggregates"
-        const val GLOBAL = "global"
+        const val CONTRIBUTIONS = "contributions"
+        const val FIELD_TOTAL = "total"
+        const val FIELD_TODAY_TOTAL = "todayTotal"
+        const val FIELD_TODAY_DAY = "todayEpochDay"
     }
 }

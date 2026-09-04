@@ -73,57 +73,73 @@ configuration. The file is gitignored; do not commit it.
 Rebuild. On the Universal Dhikr tab, "Not connected" becomes a live figure and the sign-in
 buttons appear.
 
-## 5. Deploy rules and functions
+Keep this file. It is gitignored, so a fresh checkout builds a working offline app with no cloud
+attached until the file is supplied again.
 
-```bash
-npm install -g firebase-tools
-firebase login
-cd backend
-firebase use --add          # select your project
-firebase deploy --only firestore:rules,firestore:indexes,functions
-```
+## 5. Publish the security rules
 
-Cloud Functions require the Blaze plan. The workload here is one small transaction per batch of
-counting and a nightly reconciliation pass.
+No command line, no Cloud Functions, no billing. Paste the rules into the console:
+
+1. Firebase console → **Firestore Database** → the **Rules** tab
+2. Select everything in the editor and replace it with the contents of
+   [`firestore.rules`](firestore.rules)
+3. Click **Publish**
+
+That is the whole deployment. There is no server code to run.
 
 ---
 
 ## How the data is laid out
 
+One collection, holding nothing but numbers:
+
 ```
-users/{uid}                  profile; total, todayTotal — written only by the functions
-users/{uid}/ops/{opId}       one immutable operation per counting action
-users/{uid}/applied/{opId}   idempotency marker; no client can read or write this
-aggregates/global            worldwide total, today's total, participant count
+contributions/{uid}   { total, todayTotal, todayEpochDay, updatedAt }
 ```
+
+No name, no email, no record of which dhikr was said — all of that stays on the device. What
+reaches the cloud is an account id and a running total.
+
+### Why there is no counter document
+
+An earlier design kept a single `aggregates/global` document that every contribution incremented,
+maintained by a Cloud Function. Two problems retired it:
+
+- **Cost.** One document per counted tap meant a hundred dhikr cost a hundred writes plus a
+  hundred function invocations. The free Firestore quota supported roughly fifty active people.
+- **Contention.** Firestore sustains about one write per second to any single document. A shared
+  counter would have started failing transactions long before the app was interesting, and fixing
+  that properly means sharded counters and their own consistency problems.
+
+The worldwide figure is now a server-side `sum()` across `contributions`, billed per thousand
+entries scanned — a handful of reads however many people are counting — and there is no shared
+document for anyone to contend over.
 
 ### Why it cannot double count
 
-The client generates a UUID for every counting action and uses it as the document id. A retry
-after a timeout therefore rewrites the *same* document rather than adding a second one.
-
-`applyOperation` then claims `users/{uid}/applied/{opId}` inside the same transaction that moves
-the totals. Whichever way an operation arrives twice — a client retry, a function retry, a
-rewritten document — the second attempt finds the marker and stops. Totals are clamped at zero so
-an undo can never drive one negative.
-
-`reconcileGlobalTotal` recomputes the worldwide figure from the per-user totals nightly. It should
-never find a discrepancy; running it is how you know that stays true.
+The client publishes an **absolute** running total, not an increment. Writing the same total twice
+leaves the collection exactly where it was, so a retry after a timeout, a crash mid-write, or a
+hundred repeated connects are all harmless. There is no idempotency key, because there is nothing
+being added.
 
 ### What the rules enforce
 
-- A user can read and write only their own documents.
-- Operations are append-only and immutable — no client can edit or delete one after the fact.
-- `total`, `todayTotal` and the applied markers are closed to every client. The only writer is the
-  aggregation function, which runs with Admin credentials and bypasses rules.
-- `aggregates/global` is readable by any signed-in user and writable by none.
-- Every path not explicitly allowed is denied.
+- You may write exactly one document: the one named after your own account id.
+- A total may never decrease, so a replayed or out-of-order write cannot roll somebody back.
+- A total must be a non-negative integer below a billion; `todayTotal` cannot exceed it.
+- Contributions cannot be deleted, matching the app itself.
+- Every other path is denied.
 
-Test the rules before trusting them:
+Reads are open to any signed-in user, because Firestore evaluates rules for aggregation queries
+too and the worldwide sum has to be allowed to run. What that exposes is a random account id and a
+number.
 
-```bash
-firebase emulators:start --only firestore
-```
+### Worth adding later
+
+**App Check** would tie writes to genuine installs of your app, which is the proper answer to
+somebody publishing an inflated total for themselves. The rules above cap the damage — one account
+cannot touch another's figure, and cannot exceed the ceiling — but they cannot tell an honest
+client from a modified one.
 
 ---
 

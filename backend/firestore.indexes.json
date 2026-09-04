@@ -1,13 +1,4 @@
 {
-  "indexes": [
-    {
-      "collectionGroup": "ops",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "epochDay", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
-      ]
-    }
-  ],
+  "indexes": [],
   "fieldOverrides": []
 }

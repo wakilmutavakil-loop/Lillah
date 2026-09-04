@@ -2,13 +2,18 @@ rules_version = '2';
 
 // Dhikr — Firestore security rules.
 //
-// Two invariants matter here:
+// The entire cloud is one collection. Each signed-in person owns exactly one document in it,
+// named after their account id, containing nothing but numbers:
 //
-//   1. A user can only ever write their own contributions.
-//   2. No client can write a total. Totals are produced only by the aggregation function, which
-//      runs with Admin privileges and bypasses these rules.
+//   contributions/{uid}   { total, todayTotal, todayEpochDay, updatedAt }
 //
-// Everything else follows from those.
+// No name, no email, no record of which dhikr was said — all of that stays on the device. What
+// these rules have to guarantee is narrow and checkable: you may write your own document and
+// nobody else's, your total may not go backwards, and it may not be absurd.
+//
+// Reads are open to any signed-in user because the worldwide figure is a server-side sum() over
+// this collection, and Firestore evaluates rules for aggregation queries too. What that exposes
+// is a random account id and a number.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -21,65 +26,40 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    // Fields the server owns. A client that tries to set one is rejected outright rather than
-    // having it quietly ignored, so a tampered build fails loudly instead of appearing to work.
-    function touchesServerFields(data) {
-      return data.diff(resource.data).affectedKeys()
-        .hasAny(['total', 'todayTotal', 'todayEpochDay', 'appliedOps']);
-    }
-
-    match /users/{uid} {
-      // A profile is readable only by its owner. Nothing about one user is exposed to another;
-      // the worldwide board is built from the aggregate document, never from scanning users.
-      allow read: if isOwner(uid);
-
-      // Creating a profile must not arrive with a total already on it.
-      allow create: if isOwner(uid)
-        && !request.resource.data.keys().hasAny(
-             ['total', 'todayTotal', 'todayEpochDay', 'appliedOps']
-           );
-
-      allow update: if isOwner(uid) && !touchesServerFields(request.resource.data);
-
-      // Accounts are not deleted from the client. Removing one would orphan its contribution in
-      // the global total; account deletion is handled server-side, out of band.
-      allow delete: if false;
-
-      match /ops/{opId} {
-        allow read: if isOwner(uid);
-
-        // Operations are append-only and immutable. Immutability is what makes the client's
-        // idempotency key meaningful: a retry rewrites an identical document and the aggregation
-        // function, which folds each document in exactly once, is unaffected.
-        allow create: if isOwner(uid) && validOperation();
-        allow update: if isOwner(uid) && request.resource.data.diff(resource.data)
-                                           .affectedKeys().size() == 0;
-        allow delete: if false;
-      }
-    }
-
-    function validOperation() {
+    function wellFormed() {
       let d = request.resource.data;
-      return d.keys().hasAll(['kind', 'epochDay', 'delta', 'createdAt'])
-        && d.kind in ['COUNT_DELTA', 'BASELINE']
-        // A single operation is bounded. A tap is 1 and an undo is -1; a baseline carries a whole
-        // history, so the ceiling is generous but finite — an unbounded delta would let one
-        // client move the worldwide figure arbitrarily.
-        && d.delta is int
-        && d.delta >= -1000
-        && d.delta <= 100000000
-        && d.epochDay is int
-        && d.epochDay > 0;
+      return d.keys().hasOnly(['total', 'todayTotal', 'todayEpochDay', 'updatedAt'])
+        && d.total is int
+        && d.total >= 0
+        // A ceiling on any single person's contribution. Counting a billion dhikr by hand would
+        // take several lifetimes, so anything above it is a broken client or a dishonest one, and
+        // either way it should not be allowed to move the worldwide figure.
+        && d.total <= 1000000000
+        && d.todayTotal is int
+        && d.todayTotal >= 0
+        && d.todayTotal <= d.total
+        && d.todayEpochDay is int
+        && d.todayEpochDay > 0;
     }
 
-    // The worldwide figures. Readable by anyone signed in, writable by nobody: the only writer is
-    // the aggregation function, running with Admin credentials.
-    match /aggregates/{document} {
+    // A total is a running lifetime figure, so it only ever climbs. This turns a replayed or
+    // reordered write — an old total arriving after a newer one — into a no-op rather than a
+    // silent regression of somebody's contribution.
+    function neverDecreases() {
+      return request.resource.data.total >= resource.data.total;
+    }
+
+    match /contributions/{uid} {
       allow read: if signedIn();
-      allow write: if false;
+      allow create: if isOwner(uid) && wellFormed();
+      allow update: if isOwner(uid) && wellFormed() && neverDecreases();
+
+      // Contributions are permanent, matching the app itself: nothing it records can be deleted.
+      allow delete: if false;
     }
 
-    // Anything not matched above is denied.
+    // Everything else is denied. There is no other collection, and no client has any business
+    // creating one.
     match /{document=**} {
       allow read, write: if false;
     }

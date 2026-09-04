@@ -1,7 +1,6 @@
 package com.lillah.dhikr.data.backend
 
 import android.app.Activity
-import com.lillah.dhikr.data.local.entity.SyncOperationEntity
 import com.lillah.dhikr.domain.sync.AuthMethod
 import com.lillah.dhikr.domain.sync.AuthUser
 import com.lillah.dhikr.domain.sync.RemoteFigures
@@ -21,18 +20,29 @@ interface DhikrBackend {
     val isConfigured: Boolean
 
     /**
-     * Uploads operations. Implementations must be idempotent on [SyncOperationEntity.opId]:
-     * pushing the same operation again, after a timeout or a crash, must not count it twice.
+     * Publishes this account's running total.
+     *
+     * An absolute figure, not a delta — which makes the upload idempotent by construction. Sending
+     * the same total twice, after a timeout or a crash or a hundred retries, leaves the cloud
+     * exactly where it was. There is no way for a repeated upload to count anything twice, because
+     * there is nothing being added.
+     *
+     * One document write per connect, whatever the user counted in between.
      */
-    suspend fun push(uid: String, operations: List<SyncOperationEntity>): Result<Unit>
+    suspend fun publishContribution(
+        uid: String,
+        total: Long,
+        todayTotal: Long,
+        todayEpochDay: Long,
+    ): Result<Unit>
 
-    /** Records or refreshes the account's profile document. */
-    suspend fun registerUser(user: AuthUser): Result<Unit>
-
-    suspend fun fetchFigures(uid: String?): Result<RemoteFigures>
-
-    /** Live global and personal figures. Emits nothing when unconfigured. */
-    fun observeFigures(uid: String?): Flow<RemoteFigures>
+    /**
+     * Reads the worldwide figures, aggregated server-side — nothing is downloaded per person.
+     *
+     * [todayEpochDay] is the caller's local day, so "counted worldwide today" means the people
+     * whose day matches this one rather than a UTC day nobody is actually living in.
+     */
+    suspend fun fetchFigures(todayEpochDay: Long): Result<RemoteFigures>
 }
 
 interface AuthGateway {
@@ -60,15 +70,15 @@ interface AuthGateway {
 class UnconfiguredBackend : DhikrBackend {
     override val isConfigured = false
 
-    override suspend fun push(uid: String, operations: List<SyncOperationEntity>) =
-        Result.failure<Unit>(BackendUnavailable)
+    override suspend fun publishContribution(
+        uid: String,
+        total: Long,
+        todayTotal: Long,
+        todayEpochDay: Long,
+    ) = Result.failure<Unit>(BackendUnavailable)
 
-    override suspend fun registerUser(user: AuthUser) = Result.failure<Unit>(BackendUnavailable)
-
-    override suspend fun fetchFigures(uid: String?) =
+    override suspend fun fetchFigures(todayEpochDay: Long) =
         Result.failure<RemoteFigures>(BackendUnavailable)
-
-    override fun observeFigures(uid: String?): Flow<RemoteFigures> = flowOf()
 }
 
 class UnconfiguredAuthGateway : AuthGateway {

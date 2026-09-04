@@ -201,3 +201,19 @@ data class ProfileCounterEntity(
     val key: String,
     val value: Long,
 )
+
+/**
+ * What this profile has already told the world about.
+ *
+ * Sync uploads an absolute running total rather than a stream of increments, so the only thing
+ * worth remembering between connects is the figure that was last accepted. Everything still
+ * waiting is simply the difference between that and the local lifetime total — which means a
+ * device that has never connected correctly reports its entire history as pending, with no
+ * bookkeeping needed to discover that.
+ */
+@Entity(tableName = "profile_sync_state")
+data class ProfileSyncStateEntity(
+    @PrimaryKey val profileId: Long,
+    val lastUploadedTotal: Long = 0,
+    val lastUploadedAt: Long = 0,
+)

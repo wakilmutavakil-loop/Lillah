@@ -19,6 +19,7 @@ import com.lillah.dhikr.data.local.entity.DhikrEntity
 import com.lillah.dhikr.data.local.entity.ProfileAchievementEntity
 import com.lillah.dhikr.data.local.entity.ProfileCounterEntity
 import com.lillah.dhikr.data.local.entity.ProfileEntity
+import com.lillah.dhikr.data.local.entity.ProfileSyncStateEntity
 import com.lillah.dhikr.data.local.entity.RemoteSnapshotEntity
 import com.lillah.dhikr.data.local.entity.SyncOperationEntity
 
@@ -36,8 +37,9 @@ import com.lillah.dhikr.data.local.entity.SyncOperationEntity
         ProfileEntity::class,
         ProfileAchievementEntity::class,
         ProfileCounterEntity::class,
+        ProfileSyncStateEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class DhikrDatabase : RoomDatabase() {

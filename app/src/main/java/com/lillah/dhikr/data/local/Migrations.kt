@@ -160,5 +160,29 @@ object Migrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+    /**
+     * 3 to 4 — one write per connect.
+     *
+     * Sync used to upload one document per counted tap. It now uploads a single running total,
+     * which needs somewhere to remember the figure the server last accepted. That is all this
+     * migration adds: one new table, nothing altered, nothing removed. The old
+     * `sync_operations` rows stay exactly where they are and are still written on every count as
+     * the device's own record of what happened.
+     */
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `profile_sync_state` (
+                    `profileId` INTEGER NOT NULL,
+                    `lastUploadedTotal` INTEGER NOT NULL,
+                    `lastUploadedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`profileId`)
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 }

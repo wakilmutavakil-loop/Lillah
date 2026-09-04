@@ -16,8 +16,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // versionCode must only ever increase; Android rejects a downgrade install.
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
 

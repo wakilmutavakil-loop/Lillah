@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import com.lillah.dhikr.data.local.entity.ProfileSyncStateEntity
 import com.lillah.dhikr.data.local.entity.RemoteSnapshotEntity
 import com.lillah.dhikr.data.local.entity.SyncOperationEntity
 import kotlinx.coroutines.flow.Flow
@@ -39,17 +40,18 @@ interface SyncDao {
     @Query("SELECT EXISTS(SELECT 1 FROM sync_operations WHERE opId = :opId)")
     suspend fun exists(opId: String): Boolean
 
+    /** Marks everything queued for a profile as accounted for by an accepted upload. */
     @Query(
-        "UPDATE sync_operations SET state = 'SYNCED', ownerUid = :uid, " +
-            "lastAttemptAt = :now, lastError = NULL WHERE opId IN (:opIds)"
+        "UPDATE sync_operations SET state = 'SYNCED', ownerUid = :uid, lastAttemptAt = :now, " +
+            "lastError = NULL WHERE profileId = :profileId AND state != 'SYNCED'"
     )
-    suspend fun markSynced(opIds: List<String>, uid: String, now: Long)
+    suspend fun markAllSynced(profileId: Long, uid: String, now: Long)
 
     @Query(
-        "UPDATE sync_operations SET state = 'PENDING', attempts = attempts + 1, " +
-            "lastAttemptAt = :now, lastError = :error WHERE opId IN (:opIds)"
+        "UPDATE sync_operations SET attempts = attempts + 1, lastAttemptAt = :now, " +
+            "lastError = :error WHERE profileId = :profileId AND state != 'SYNCED'"
     )
-    suspend fun markFailed(opIds: List<String>, error: String?, now: Long)
+    suspend fun markAttemptFailed(profileId: Long, error: String?, now: Long)
 
     /**
      * Everything the outbox has ever carried for ordinary counting, synced or not. Subtracting it
@@ -61,6 +63,15 @@ interface SyncDao {
             "WHERE profileId = :profileId AND kind = 'COUNT_DELTA'"
     )
     suspend fun countDeltaTotal(profileId: Long): Long
+
+    @Query("SELECT * FROM profile_sync_state WHERE profileId = :profileId")
+    fun observeSyncState(profileId: Long): Flow<ProfileSyncStateEntity?>
+
+    @Query("SELECT * FROM profile_sync_state WHERE profileId = :profileId")
+    suspend fun syncState(profileId: Long): ProfileSyncStateEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putSyncState(state: ProfileSyncStateEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putSnapshot(snapshot: RemoteSnapshotEntity)

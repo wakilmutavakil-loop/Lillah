@@ -126,6 +126,22 @@ class MigrationV2ToV3Test {
     }
 
     @Test
+    fun `the sync state table arrives empty, so an unsynced device owes its whole history`() =
+        runBlocking {
+            V2DatabaseBuilder.create(context, dbName) { db ->
+                V1DatabaseBuilder.insertDhikr(db, 1, "SubhanAllah", null)
+                V1DatabaseBuilder.insertCount(db, 1, 19_000, 25_000)
+            }
+
+            val db = openUpgraded()
+
+            // Nothing has been published, so nothing is recorded as published — which is exactly
+            // what makes the entire pre-existing history count as waiting to join the world.
+            assertNull(db.syncDao().syncState(device))
+            assertEquals(25_000L, db.countDao().lifetimeTotal(device))
+        }
+
+    @Test
     fun `an empty v2 database upgrades`() = runBlocking {
         V2DatabaseBuilder.create(context, dbName)
         val db = openUpgraded()
