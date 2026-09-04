@@ -44,6 +44,7 @@ import com.lillah.dhikr.ui.components.ProgressRing
 import com.lillah.dhikr.ui.components.SectionHeader
 import com.lillah.dhikr.ui.components.SegmentedSelector
 import com.lillah.dhikr.ui.components.SoftCard
+import com.lillah.dhikr.ui.components.sheenOverlay
 import com.lillah.dhikr.ui.components.StatTile
 import com.lillah.dhikr.ui.components.WeeklyBars
 import com.lillah.dhikr.ui.theme.LocalAppGradients
@@ -405,6 +406,7 @@ private fun GardenCard(state: ProgressUiState) {
             .fillMaxWidth()
             .clip(Radii.cardLarge)
             .background(Brush.linearGradient(gradients.hero))
+            .sheenOverlay()
             .padding(Spacing.xl),
     ) {
         Column {

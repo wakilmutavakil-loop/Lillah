@@ -12,8 +12,11 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface CollectionDao {
 
-    @Query("SELECT * FROM collections WHERE isArchived = 0 ORDER BY sortOrder ASC, id ASC")
-    fun observeAll(): Flow<List<CollectionEntity>>
+    @Query(
+        "SELECT * FROM collections WHERE profileId = :profileId AND isArchived = 0 " +
+            "ORDER BY sortOrder ASC, id ASC"
+    )
+    fun observeAll(profileId: Long): Flow<List<CollectionEntity>>
 
     @Query("SELECT * FROM collections WHERE id = :id")
     fun observeById(id: Long): Flow<CollectionEntity?>
@@ -21,14 +24,14 @@ interface CollectionDao {
     @Query("SELECT * FROM collections WHERE id = :id")
     suspend fun getById(id: Long): CollectionEntity?
 
-    @Query("SELECT * FROM collections WHERE kind = :kind LIMIT 1")
-    suspend fun getByKind(kind: String): CollectionEntity?
+    @Query("SELECT * FROM collections WHERE profileId = :profileId AND kind = :kind LIMIT 1")
+    suspend fun getByKind(profileId: Long, kind: String): CollectionEntity?
 
-    @Query("SELECT COUNT(*) FROM collections")
-    suspend fun count(): Int
+    @Query("SELECT COUNT(*) FROM collections WHERE profileId = :profileId")
+    suspend fun count(profileId: Long): Int
 
-    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM collections")
-    suspend fun maxSortOrder(): Int
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM collections WHERE profileId = :profileId")
+    suspend fun maxSortOrder(profileId: Long): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: CollectionEntity): Long
@@ -36,8 +39,8 @@ interface CollectionDao {
     @Update
     suspend fun update(entity: CollectionEntity)
 
-    @Query("DELETE FROM collections WHERE id = :id")
-    suspend fun deleteById(id: Long)
+    @Query("UPDATE collections SET isArchived = :archived WHERE id = :id")
+    suspend fun setArchived(id: Long, archived: Boolean)
 
     @Query("UPDATE collections SET coverImagePath = :path WHERE id = :id")
     suspend fun setCoverImage(id: Long, path: String?)

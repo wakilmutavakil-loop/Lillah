@@ -25,7 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -46,7 +46,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.lillah.dhikr.domain.model.CoverArt
-import com.lillah.dhikr.ui.components.ConfirmSheet
 import com.lillah.dhikr.ui.components.CoverArtworkCanvas
 import com.lillah.dhikr.ui.components.LabeledField
 import com.lillah.dhikr.ui.components.SectionHeader
@@ -62,12 +61,11 @@ fun CollectionEditorScreen(
     onPickCover: (android.net.Uri) -> Unit,
     onClearCover: () -> Unit,
     onSave: () -> Unit,
-    onDelete: () -> Unit,
+    onArchive: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
-    var confirmDelete by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri -> if (uri != null) onPickCover(uri) }
@@ -254,35 +252,21 @@ fun CollectionEditorScreen(
 
         if (!state.isNew && !state.isBuiltIn) {
             Spacer(Modifier.height(Spacing.s))
-            TextButton(
-                onClick = { confirmDelete = true },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            TextButton(onClick = onArchive, modifier = Modifier.fillMaxWidth()) {
                 Icon(
-                    Icons.Rounded.DeleteOutline,
+                    Icons.Rounded.Inventory2,
                     null,
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.error,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.size(Spacing.s))
-                Text("Delete collection", color = MaterialTheme.colorScheme.error)
+                Text(
+                    "Archive — the adhkar inside it are kept",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
         Spacer(Modifier.height(Spacing.xxl))
-    }
-
-    if (confirmDelete) {
-        ConfirmSheet(
-            title = "Delete this collection?",
-            message = "The adhkar inside it are kept, along with everything you have counted. " +
-                "They simply stop belonging to a collection.",
-            confirmLabel = "Delete",
-            onDismiss = { confirmDelete = false },
-            onConfirm = {
-                confirmDelete = false
-                onDelete()
-            },
-        )
     }
 }

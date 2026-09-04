@@ -49,38 +49,61 @@ interface CountDao {
         addToExisting(dhikrId, epochDay, delta, now)
     }
 
-    @Query("SELECT COALESCE(SUM(count), 0) FROM dhikr_counts WHERE epochDay = :epochDay")
-    fun observeDayTotal(epochDay: Long): Flow<Int>
-
-    @Query("SELECT COALESCE(SUM(count), 0) FROM dhikr_counts")
-    fun observeLifetimeTotal(): Flow<Long>
-
-    @Query("SELECT COALESCE(SUM(count), 0) FROM dhikr_counts")
-    suspend fun lifetimeTotal(): Long
+    @Query(
+        "SELECT COALESCE(SUM(c.count), 0) FROM dhikr_counts c " +
+            "INNER JOIN dhikr d ON d.id = c.dhikrId " +
+            "WHERE d.profileId = :profileId AND c.epochDay = :epochDay"
+    )
+    fun observeDayTotal(profileId: Long, epochDay: Long): Flow<Int>
 
     @Query(
-        "SELECT epochDay AS epochDay, SUM(count) AS total FROM dhikr_counts " +
-            "WHERE epochDay BETWEEN :fromDay AND :toDay GROUP BY epochDay ORDER BY epochDay ASC"
+        "SELECT COALESCE(SUM(c.count), 0) FROM dhikr_counts c " +
+            "INNER JOIN dhikr d ON d.id = c.dhikrId WHERE d.profileId = :profileId"
     )
-    fun observeDayTotals(fromDay: Long, toDay: Long): Flow<List<DayTotal>>
+    fun observeLifetimeTotal(profileId: Long): Flow<Long>
+
+    @Query(
+        "SELECT COALESCE(SUM(c.count), 0) FROM dhikr_counts c " +
+            "INNER JOIN dhikr d ON d.id = c.dhikrId WHERE d.profileId = :profileId"
+    )
+    suspend fun lifetimeTotal(profileId: Long): Long
+
+    @Query(
+        "SELECT c.epochDay AS epochDay, SUM(c.count) AS total FROM dhikr_counts c " +
+            "INNER JOIN dhikr d ON d.id = c.dhikrId " +
+            "WHERE d.profileId = :profileId AND c.epochDay BETWEEN :fromDay AND :toDay " +
+            "GROUP BY c.epochDay ORDER BY c.epochDay ASC"
+    )
+    fun observeDayTotals(profileId: Long, fromDay: Long, toDay: Long): Flow<List<DayTotal>>
 
     @Query(
         "SELECT c.dhikrId AS dhikrId, d.name AS name, d.arabic AS arabic, " +
             "d.accentIndex AS accentIndex, d.targetCount AS targetCount, c.count AS total " +
             "FROM dhikr_counts c INNER JOIN dhikr d ON d.id = c.dhikrId " +
-            "WHERE c.epochDay = :epochDay AND c.count > 0 ORDER BY c.count DESC"
+            "WHERE d.profileId = :profileId AND c.epochDay = :epochDay AND c.count > 0 " +
+            "ORDER BY c.count DESC"
     )
-    fun observeDayBreakdown(epochDay: Long): Flow<List<DhikrDayTotal>>
+    fun observeDayBreakdown(profileId: Long, epochDay: Long): Flow<List<DhikrDayTotal>>
 
     /** Days on which anything at all was counted — the raw material for streaks. */
-    @Query("SELECT DISTINCT epochDay FROM dhikr_counts WHERE count > 0 ORDER BY epochDay DESC")
-    fun observeActiveDays(): Flow<List<Long>>
+    @Query(
+        "SELECT DISTINCT c.epochDay FROM dhikr_counts c INNER JOIN dhikr d ON d.id = c.dhikrId " +
+            "WHERE d.profileId = :profileId AND c.count > 0 ORDER BY c.epochDay DESC"
+    )
+    fun observeActiveDays(profileId: Long): Flow<List<Long>>
 
-    @Query("SELECT DISTINCT epochDay FROM dhikr_counts WHERE count > 0 ORDER BY epochDay DESC")
-    suspend fun activeDays(): List<Long>
+    @Query(
+        "SELECT DISTINCT c.epochDay FROM dhikr_counts c INNER JOIN dhikr d ON d.id = c.dhikrId " +
+            "WHERE d.profileId = :profileId AND c.count > 0 ORDER BY c.epochDay DESC"
+    )
+    suspend fun activeDays(profileId: Long): List<Long>
 
-    @Query("SELECT COUNT(DISTINCT epochDay) FROM dhikr_counts WHERE count > 0")
-    fun observeActiveDayCount(): Flow<Int>
+    @Query(
+        "SELECT COUNT(DISTINCT c.epochDay) FROM dhikr_counts c " +
+            "INNER JOIN dhikr d ON d.id = c.dhikrId " +
+            "WHERE d.profileId = :profileId AND c.count > 0"
+    )
+    fun observeActiveDayCount(profileId: Long): Flow<Int>
 
     @Query(
         "SELECT d.collectionId AS collectionId, COUNT(*) AS itemCount, " +
@@ -88,10 +111,13 @@ interface CountDao {
             "COALESCE(SUM(COALESCE(c.count, 0)), 0) AS totalToday " +
             "FROM dhikr d LEFT JOIN dhikr_counts c " +
             "ON c.dhikrId = d.id AND c.epochDay = :epochDay " +
-            "WHERE d.isArchived = 0 AND d.collectionId IS NOT NULL " +
-            "GROUP BY d.collectionId"
+            "WHERE d.profileId = :profileId AND d.isArchived = 0 " +
+            "AND d.collectionId IS NOT NULL GROUP BY d.collectionId"
     )
-    fun observeCollectionCompletions(epochDay: Long): Flow<List<CollectionCompletion>>
+    fun observeCollectionCompletions(
+        profileId: Long,
+        epochDay: Long,
+    ): Flow<List<CollectionCompletion>>
 
     @Query(
         "SELECT d.collectionId AS collectionId, COUNT(*) AS itemCount, " +
@@ -104,12 +130,12 @@ interface CountDao {
     )
     suspend fun collectionCompletion(collectionId: Long, epochDay: Long): CollectionCompletion?
 
-    @Query("SELECT COALESCE(SUM(count), 0) FROM dhikr_counts WHERE epochDay = :epochDay")
-    suspend fun dayTotal(epochDay: Long): Int
+    @Query(
+        "SELECT COALESCE(SUM(c.count), 0) FROM dhikr_counts c " +
+            "INNER JOIN dhikr d ON d.id = c.dhikrId " +
+            "WHERE d.profileId = :profileId AND c.epochDay = :epochDay"
+    )
+    suspend fun dayTotal(profileId: Long, epochDay: Long): Int
 
-    @Query("DELETE FROM dhikr_counts WHERE epochDay = :epochDay")
-    suspend fun clearDay(epochDay: Long)
-
-    @Query("DELETE FROM dhikr_counts")
-    suspend fun clearAll()
+    // No delete queries. Recorded counting is permanent by design; see README.
 }

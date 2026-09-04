@@ -19,9 +19,12 @@ fun Color.mix(other: Color, amount: Float): Color {
 fun Color.lighten(amount: Float): Color = mix(Color.White, amount)
 fun Color.darken(amount: Float): Color = mix(Color.Black, amount)
 
-private val LightInk = Color(0xFF14131C)
-private val DarkCanvas = Color(0xFF08070F)
-private val DarkInk = Color(0xFFEFECF8)
+// Neither pure black nor pure white. Ink carries a trace of the palette so text sits in the same
+// family as everything around it, and the dark canvas is deep enough for colour to read as light
+// against it rather than as grey.
+private val LightInk = Color(0xFF12111A)
+private val DarkCanvas = Color(0xFF07060D)
+private val DarkInk = Color(0xFFF2EFFA)
 
 private val ErrorLight = Color(0xFFBA1A1A)
 private val ErrorDark = Color(0xFFFFB4AB)
@@ -35,81 +38,83 @@ fun PaletteSpec.toColorScheme(dark: Boolean): ColorScheme = if (!dark) {
     lightColorScheme(
         primary = primary,
         onPrimary = Color.White,
-        primaryContainer = primary.lighten(0.86f),
-        onPrimaryContainer = primary.darken(0.45f),
-        inversePrimary = primary.lighten(0.55f),
+        primaryContainer = primary.lighten(0.88f),
+        onPrimaryContainer = primary.darken(0.42f),
+        inversePrimary = primary.lighten(0.58f),
 
         secondary = secondary,
         onSecondary = Color.White,
-        secondaryContainer = secondary.lighten(0.88f),
-        onSecondaryContainer = secondary.darken(0.45f),
+        secondaryContainer = secondary.lighten(0.89f),
+        onSecondaryContainer = secondary.darken(0.42f),
 
         tertiary = tertiary,
         onTertiary = Color.White,
-        tertiaryContainer = tertiary.lighten(0.87f),
-        onTertiaryContainer = tertiary.darken(0.45f),
+        tertiaryContainer = tertiary.lighten(0.88f),
+        onTertiaryContainer = tertiary.darken(0.42f),
 
-        background = auroraStops.first().mix(Color.White, 0.945f),
-        onBackground = LightInk,
-        surface = primary.mix(Color.White, 0.975f),
-        onSurface = LightInk,
-        surfaceVariant = primary.lighten(0.9f),
-        onSurfaceVariant = primary.darken(0.35f).mix(LightInk, 0.45f),
+        background = auroraStops.first().mix(Color.White, 0.955f),
+        onBackground = LightInk.mix(primary, 0.08f),
+        surface = primary.mix(Color.White, 0.978f),
+        onSurface = LightInk.mix(primary, 0.08f),
+        surfaceVariant = primary.lighten(0.92f),
+        onSurfaceVariant = primary.darken(0.28f).mix(LightInk, 0.5f),
         surfaceTint = primary,
-        inverseSurface = LightInk,
+        inverseSurface = LightInk.mix(primary, 0.12f),
         inverseOnSurface = Color.White,
 
+        // Six clearly separated steps rather than four near-identical ones: depth in a light
+        // theme comes from surfaces that are actually distinguishable, not from heavier shadows.
         surfaceContainerLowest = Color.White,
-        surfaceContainerLow = primary.mix(Color.White, 0.97f),
-        surfaceContainer = primary.mix(Color.White, 0.945f),
-        surfaceContainerHigh = primary.mix(Color.White, 0.915f),
-        surfaceContainerHighest = primary.mix(Color.White, 0.88f),
+        surfaceContainerLow = primary.mix(Color.White, 0.982f),
+        surfaceContainer = primary.mix(Color.White, 0.962f),
+        surfaceContainerHigh = primary.mix(Color.White, 0.932f),
+        surfaceContainerHighest = primary.mix(Color.White, 0.9f),
 
-        outline = primary.lighten(0.6f),
-        outlineVariant = primary.lighten(0.84f),
-        scrim = Color.Black,
+        outline = primary.lighten(0.56f),
+        outlineVariant = primary.lighten(0.87f),
+        scrim = LightInk,
 
         error = ErrorLight,
         onError = Color.White,
-        errorContainer = ErrorLight.lighten(0.85f),
-        onErrorContainer = ErrorLight.darken(0.4f),
+        errorContainer = ErrorLight.lighten(0.87f),
+        onErrorContainer = ErrorLight.darken(0.38f),
     )
 } else {
     darkColorScheme(
         primary = primary,
-        onPrimary = primary.darken(0.72f),
-        primaryContainer = primary.mix(DarkCanvas, 0.7f),
-        onPrimaryContainer = primary.lighten(0.55f),
-        inversePrimary = primary.darken(0.35f),
+        onPrimary = primary.darken(0.78f),
+        primaryContainer = primary.mix(DarkCanvas, 0.72f),
+        onPrimaryContainer = primary.lighten(0.62f),
+        inversePrimary = primary.darken(0.32f),
 
         secondary = secondary,
-        onSecondary = secondary.darken(0.75f),
-        secondaryContainer = secondary.mix(DarkCanvas, 0.72f),
-        onSecondaryContainer = secondary.lighten(0.55f),
+        onSecondary = secondary.darken(0.78f),
+        secondaryContainer = secondary.mix(DarkCanvas, 0.74f),
+        onSecondaryContainer = secondary.lighten(0.62f),
 
         tertiary = tertiary,
-        onTertiary = tertiary.darken(0.75f),
-        tertiaryContainer = tertiary.mix(DarkCanvas, 0.72f),
-        onTertiaryContainer = tertiary.lighten(0.55f),
+        onTertiary = tertiary.darken(0.78f),
+        tertiaryContainer = tertiary.mix(DarkCanvas, 0.74f),
+        onTertiaryContainer = tertiary.lighten(0.62f),
 
-        background = primary.mix(DarkCanvas, 0.94f),
+        background = primary.mix(DarkCanvas, 0.955f),
         onBackground = DarkInk,
-        surface = primary.mix(DarkCanvas, 0.93f),
+        surface = primary.mix(DarkCanvas, 0.94f),
         onSurface = DarkInk,
-        surfaceVariant = primary.mix(DarkCanvas, 0.84f),
-        onSurfaceVariant = primary.lighten(0.35f).mix(DarkInk, 0.5f),
+        surfaceVariant = primary.mix(DarkCanvas, 0.86f),
+        onSurfaceVariant = primary.lighten(0.42f).mix(DarkInk, 0.45f),
         surfaceTint = primary,
         inverseSurface = DarkInk,
         inverseOnSurface = DarkCanvas,
 
-        surfaceContainerLowest = primary.mix(DarkCanvas, 0.97f),
-        surfaceContainerLow = primary.mix(DarkCanvas, 0.93f),
-        surfaceContainer = primary.mix(DarkCanvas, 0.9f),
-        surfaceContainerHigh = primary.mix(DarkCanvas, 0.86f),
-        surfaceContainerHighest = primary.mix(DarkCanvas, 0.8f),
+        surfaceContainerLowest = primary.mix(DarkCanvas, 0.975f),
+        surfaceContainerLow = primary.mix(DarkCanvas, 0.94f),
+        surfaceContainer = primary.mix(DarkCanvas, 0.915f),
+        surfaceContainerHigh = primary.mix(DarkCanvas, 0.875f),
+        surfaceContainerHighest = primary.mix(DarkCanvas, 0.82f),
 
-        outline = primary.mix(DarkCanvas, 0.55f),
-        outlineVariant = primary.mix(DarkCanvas, 0.78f),
+        outline = primary.mix(DarkCanvas, 0.6f),
+        outlineVariant = primary.mix(DarkCanvas, 0.82f),
         scrim = Color.Black,
 
         error = ErrorDark,

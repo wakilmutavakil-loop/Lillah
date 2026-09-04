@@ -5,7 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "collections")
+@Entity(tableName = "collections", indices = [Index("profileId")])
 data class CollectionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
@@ -21,6 +21,8 @@ data class CollectionEntity(
     val sortOrder: Int = 0,
     val isBuiltIn: Boolean = false,
     val isArchived: Boolean = false,
+    /** Owning profile. 1 is the device profile that predates sign-in. */
+    val profileId: Long = 1,
 )
 
 @Entity(
@@ -33,7 +35,9 @@ data class CollectionEntity(
             onDelete = ForeignKey.SET_NULL,
         )
     ],
-    indices = [Index("collectionId"), Index("sortOrder"), Index("isArchived")],
+    indices = [
+        Index("collectionId"), Index("sortOrder"), Index("isArchived"), Index("profileId"),
+    ],
 )
 data class DhikrEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -60,6 +64,8 @@ data class DhikrEntity(
     val roundsEpochDay: Long = 0,
     val lastCountedAt: Long? = null,
     val createdAt: Long = 0,
+    /** Owning profile. Counts hang off the dhikr, so they are partitioned by this too. */
+    val profileId: Long = 1,
 )
 
 /**
@@ -112,7 +118,10 @@ data class CounterEntity(
  * Deliberately carries no foreign key to `dhikr`: deleting a dhikr must not retract a
  * contribution that has already been made, so [dhikrName] is denormalised here.
  */
-@Entity(tableName = "sync_operations", indices = [Index("state"), Index("createdAt")])
+@Entity(
+    tableName = "sync_operations",
+    indices = [Index("state"), Index("createdAt"), Index("profileId")],
+)
 data class SyncOperationEntity(
     @PrimaryKey val opId: String,
     /** Matches a [com.lillah.dhikr.domain.sync.SyncOperationKind] name. */
@@ -130,6 +139,7 @@ data class SyncOperationEntity(
     val lastError: String? = null,
     /** The account this operation was accepted under, once it has been. */
     val ownerUid: String? = null,
+    val profileId: Long = 1,
 )
 
 /**
@@ -145,4 +155,49 @@ data class RemoteSnapshotEntity(
     val userTotal: Long = 0,
     val userUid: String? = null,
     val updatedAt: Long = 0,
+)
+
+/**
+ * A person using this device.
+ *
+ * Everything a user counts lives on the device, partitioned by profile. Profile 1 always exists:
+ * it holds whatever was counted before anyone signed in, and the first account to sign in adopts
+ * it rather than starting empty. Later accounts get their own profile and their own seeded adhkar.
+ */
+@Entity(tableName = "profiles", indices = [Index(value = ["uid"], unique = true)])
+data class ProfileEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Null for the device profile until an account adopts it. */
+    val uid: String? = null,
+    val displayName: String? = null,
+    val email: String? = null,
+    val photoUrl: String? = null,
+    /** Matches a [com.lillah.dhikr.domain.sync.AuthMethod] id. */
+    val method: String? = null,
+    val createdAt: Long = 0,
+    val lastActiveAt: Long = 0,
+)
+
+/**
+ * Per-profile achievements.
+ *
+ * A new table rather than a primary key change on `achievements`: altering a primary key in SQLite
+ * means rebuilding the table, and rebuilding a table that holds user data is exactly the risk this
+ * app refuses to take. Rows are copied in at migration time and the original table is left in
+ * place, untouched, as a permanent fallback.
+ */
+@Entity(tableName = "profile_achievements", primaryKeys = ["profileId", "key"])
+data class ProfileAchievementEntity(
+    val profileId: Long,
+    val key: String,
+    val unlockedAt: Long,
+    val celebrated: Boolean = false,
+)
+
+/** Per-profile counters. Same reasoning as [ProfileAchievementEntity]. */
+@Entity(tableName = "profile_counters", primaryKeys = ["profileId", "key"])
+data class ProfileCounterEntity(
+    val profileId: Long,
+    val key: String,
+    val value: Long,
 )

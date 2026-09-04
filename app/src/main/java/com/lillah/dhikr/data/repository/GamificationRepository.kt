@@ -4,7 +4,8 @@ import com.lillah.dhikr.core.time.AppClock
 import com.lillah.dhikr.data.local.dao.AchievementDao
 import com.lillah.dhikr.data.local.dao.CountDao
 import com.lillah.dhikr.data.local.dao.CounterDao
-import com.lillah.dhikr.data.local.entity.AchievementEntity
+import com.lillah.dhikr.data.local.entity.ProfileAchievementEntity
+import com.lillah.dhikr.data.local.entity.ProfileCounterEntity
 import com.lillah.dhikr.domain.gamification.AchievementCatalog
 import com.lillah.dhikr.domain.gamification.AchievementDef
 import com.lillah.dhikr.domain.gamification.AchievementStatus
@@ -13,6 +14,7 @@ import com.lillah.dhikr.domain.gamification.Streaks
 import com.lillah.dhikr.domain.model.CollectionKind
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 
 /**
@@ -27,28 +29,39 @@ class GamificationRepository(
     private val counterDao: CounterDao,
     private val countDao: CountDao,
     private val dhikrRepository: DhikrRepository,
+    private val profiles: ProfileRepository,
     private val clock: AppClock,
 ) {
 
-    fun observeStatuses(): Flow<List<AchievementStatus>> = combine(
-        observeSnapshot(),
-        achievementDao.observeAll(),
-    ) { snapshot, unlocked ->
-        AchievementCatalog.statuses(snapshot, unlocked.associate { it.key to it.unlockedAt })
-    }
+    private val profileId: Long get() = profiles.activeProfileId.value
+
+    fun observeStatuses(): Flow<List<AchievementStatus>> =
+        profiles.activeProfileId.flatMapLatest { pid ->
+            combine(observeSnapshot(), achievementDao.observeAll(pid)) { snapshot, unlocked ->
+                AchievementCatalog.statuses(
+                    snapshot,
+                    unlocked.associate { it.key to it.unlockedAt },
+                )
+            }
+        }
 
     /** Newly unlocked achievements the UI has not celebrated yet. */
     fun observePendingCelebrations(): Flow<List<AchievementDef>> =
-        achievementDao.observeUncelebrated().map { rows ->
-            rows.mapNotNull { AchievementCatalog.find(it.key) }
+        profiles.activeProfileId.flatMapLatest { pid ->
+            achievementDao.observeUncelebrated(pid).map { rows ->
+                rows.mapNotNull { AchievementCatalog.find(it.key) }
+            }
         }
 
-    suspend fun markCelebrated(key: String) = achievementDao.markCelebrated(key)
+    suspend fun markCelebrated(key: String) = achievementDao.markCelebrated(profileId, key)
 
-    fun observeSnapshot(): Flow<GamificationSnapshot> = combine(
-        countDao.observeLifetimeTotal(),
-        countDao.observeActiveDays(),
-        counterDao.observeAll(),
+    fun observeSnapshot(): Flow<GamificationSnapshot> = profiles.activeProfileId
+        .flatMapLatest { pid -> snapshotFor(pid) }
+
+    private fun snapshotFor(pid: Long): Flow<GamificationSnapshot> = combine(
+        countDao.observeLifetimeTotal(pid),
+        countDao.observeActiveDays(pid),
+        counterDao.observeAll(pid),
     ) { lifetime, activeDays, counters ->
         val values = counters.associate { it.key to it.value }
         val streak = Streaks.compute(activeDays, clock.todayEpochDay())
@@ -72,10 +85,11 @@ class GamificationRepository(
      * the new snapshot satisfies. Unlocks are inserted with IGNORE, so this is idempotent.
      */
     suspend fun refresh(dailyGoal: Int) {
+        val pid = profileId
         val today = clock.todayEpochDay()
-        val dayTotal = countDao.dayTotal(today)
+        val dayTotal = countDao.dayTotal(pid, today)
 
-        counterDao.raiseTo(CounterKeys.BEST_DAY, dayTotal.toLong())
+        counterDao.raiseTo(pid, CounterKeys.BEST_DAY, dayTotal.toLong())
 
         if (dayTotal >= dailyGoal && dailyGoal > 0) {
             creditOncePerDay(CounterKeys.GOAL_LAST_DAY, CounterKeys.GOAL_DAYS, today)
@@ -94,26 +108,28 @@ class GamificationRepository(
             today,
         )
 
-        val streak = Streaks.compute(countDao.activeDays(), today)
-        counterDao.raiseTo(CounterKeys.BEST_STREAK, streak.best.toLong())
+        val streak = Streaks.compute(countDao.activeDays(pid), today)
+        counterDao.raiseTo(pid, CounterKeys.BEST_STREAK, streak.best.toLong())
 
-        unlockSatisfied()
+        unlockSatisfied(pid)
     }
 
-    private suspend fun unlockSatisfied() {
-        val snapshot = currentSnapshot()
+    private suspend fun unlockSatisfied(pid: Long) {
+        val snapshot = currentSnapshot(pid)
         val now = clock.nowMillis()
         AchievementCatalog.satisfied(snapshot).forEach { key ->
-            achievementDao.insertIgnore(AchievementEntity(key = key, unlockedAt = now))
+            achievementDao.insertIgnore(
+                ProfileAchievementEntity(profileId = pid, key = key, unlockedAt = now)
+            )
         }
     }
 
-    private suspend fun currentSnapshot(): GamificationSnapshot {
-        val values = counterDao.getAll().associate { it.key to it.value }
-        val activeDays = countDao.activeDays()
+    private suspend fun currentSnapshot(pid: Long): GamificationSnapshot {
+        val values = counterDao.getAll(pid).associate { it.key to it.value }
+        val activeDays = countDao.activeDays(pid)
         val streak = Streaks.compute(activeDays, clock.todayEpochDay())
         return GamificationSnapshot(
-            lifetimeTotal = countDao.lifetimeTotal(),
+            lifetimeTotal = countDao.lifetimeTotal(pid),
             currentStreak = streak.current,
             bestStreak = streak.best,
             activeDays = activeDays.size,
@@ -142,17 +158,13 @@ class GamificationRepository(
 
     /** Guards a counter so a given day can only ever contribute once to it. */
     private suspend fun creditOncePerDay(lastDayKey: String, counterKey: String, today: Long) {
-        val last = counterDao.get(lastDayKey)
+        val pid = profileId
+        val last = counterDao.get(pid, lastDayKey)
         if (last == today) return
-        counterDao.increment(counterKey)
-        counterDao.insertIgnore(
-            com.lillah.dhikr.data.local.entity.CounterEntity(lastDayKey, today)
-        )
-        counterDao.setValue(lastDayKey, today)
+        counterDao.increment(pid, counterKey)
+        counterDao.insertIgnore(ProfileCounterEntity(pid, lastDayKey, today))
+        counterDao.setValue(pid, lastDayKey, today)
     }
 
-    suspend fun resetAll() {
-        achievementDao.clearAll()
-        counterDao.clearAll()
-    }
+    // Nothing here resets achievements or counters. A milestone, once reached, stays reached.
 }

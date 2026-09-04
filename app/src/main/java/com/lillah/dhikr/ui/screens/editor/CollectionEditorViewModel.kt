@@ -73,20 +73,17 @@ class CollectionEditorViewModel(
     fun chooseCover(uri: Uri) {
         viewModelScope.launch {
             _state.value = _state.value.copy(savingCover = true)
-            val previous = _state.value.coverImagePath
             val path = coverStore.save(_state.value.id, uri)
             if (path != null) {
                 _state.value = _state.value.copy(coverImagePath = path)
-                coverStore.delete(previous)
             }
             _state.value = _state.value.copy(savingCover = false)
         }
     }
 
+    /** Returns to the built-in artwork. The chosen image file is kept, not removed. */
     fun clearCover() {
-        val previous = _state.value.coverImagePath
         _state.value = _state.value.copy(coverImagePath = null)
-        coverStore.delete(previous)
     }
 
     fun save(onSaved: (Long) -> Unit) {
@@ -109,14 +106,20 @@ class CollectionEditorViewModel(
         }
     }
 
-    /** Deleting a collection releases its adhkar rather than destroying them. */
-    fun delete(onDeleted: () -> Unit) {
-        val id = _state.value.id
-        if (id == 0L) return
+    /**
+     * Archiving hides a collection without touching it or the adhkar inside it. There is no
+     * delete: everything counted under this collection stays counted, and the collection itself
+     * can be brought back.
+     */
+    fun archive(onArchived: () -> Unit) {
+        val current = _state.value
+        if (current.id == 0L) return
         viewModelScope.launch {
-            coverStore.delete(_state.value.coverImagePath)
-            repository.deleteCollection(id)
-            onDeleted()
+            repository.getCollection(current.id)?.let {
+                repository.upsertCollection(it)
+            }
+            repository.setCollectionArchived(current.id, true)
+            onArchived()
         }
     }
 }

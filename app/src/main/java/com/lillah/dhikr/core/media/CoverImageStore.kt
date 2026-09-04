@@ -50,21 +50,8 @@ class CoverImageStore(private val context: Context) {
         }.getOrNull()
     }
 
-    fun delete(path: String?) {
-        if (path.isNullOrBlank()) return
-        runCatching { File(path).takeIf { it.exists() && it.parentFile == directory }?.delete() }
-    }
-
-    /** Removes covers left behind by replaced images or deleted collections. */
-    suspend fun pruneExcept(keep: Collection<String>) = withContext(Dispatchers.IO) {
-        runCatching {
-            val kept = keep.filterNotNull().toHashSet()
-            directory.listFiles()?.forEach { file ->
-                if (file.absolutePath !in kept) file.delete()
-            }
-        }
-        Unit
-    }
+    // No delete, and no prune sweep. A replaced cover stays on disk: the app removes nothing a
+    // user has put into it, and a handful of downscaled JPEGs costs almost nothing.
 
     private fun sampleSizeFor(width: Int, height: Int): Int {
         var sample = 1

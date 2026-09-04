@@ -1,16 +1,21 @@
 package com.lillah.dhikr.ui
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.lillah.dhikr.data.prefs.AccountState
 import com.lillah.dhikr.domain.sync.AuthMethod
 import com.lillah.dhikr.domain.sync.RemoteFigures
 import com.lillah.dhikr.domain.sync.SyncStatus
+import com.lillah.dhikr.ui.screens.universal.ConnectPrompt
+import com.lillah.dhikr.ui.screens.universal.ConnectReason
 import com.lillah.dhikr.ui.screens.universal.PersonalTotals
 import com.lillah.dhikr.ui.screens.universal.UniversalScreen
 import com.lillah.dhikr.ui.screens.universal.UniversalUiState
@@ -38,6 +43,7 @@ class UniversalScreenTest {
                     onSignOut = {},
                     onSyncNow = {},
                     onDismissMessage = {},
+                    onSnoozePrompt = {},
                 )
             }
         }
@@ -78,7 +84,8 @@ class UniversalScreenTest {
             figures = RemoteFigures(globalTotal = 1_000_000, userTotal = 10_000),
             totals = PersonalTotals(allTimeLocal = 10_500),
         )
-        assertEquals("server total plus what is still queued", 10_500L, state.userContribution)
+        assertEquals("the device is the authority on your own total", 10_500L, state.userContribution)
+        assertEquals("and it says how much has not reached the world yet", 500L, state.awaitingUpload)
         render(state)
         compose.scrollTo("Sync pending")
         compose.onNodeWithText("Sync pending").assertIsDisplayed()
@@ -137,7 +144,98 @@ class UniversalScreenTest {
                 compose.onNodeWithText(label).assertIsDisplayed()
             }
     }
+
+    @Test
+    fun `the connect prompt appears with what is waiting and can be dismissed`() {
+        var connected = 0
+        var snoozed = 0
+        compose.setContent {
+            DhikrTheme(animateColors = false) {
+                UniversalScreen(
+                    state = UniversalUiState(
+                        backendConfigured = true,
+                        account = AccountState(uid = "u"),
+                        syncStatus = SyncStatus(
+                            backendConfigured = true,
+                            signedIn = true,
+                            pendingOperations = 3,
+                            pendingTotal = 1_240,
+                        ),
+                        figures = RemoteFigures(globalTotal = 5_000_000, userTotal = 10_000),
+                        totals = PersonalTotals(allTimeLocal = 11_240),
+                        connectPrompt = ConnectPrompt(
+                            reason = ConnectReason.ContributionWaiting,
+                            pendingTotal = 1_240,
+                            lastSyncAt = 1_700_000_000_000,
+                        ),
+                    ),
+                    onSignIn = {},
+                    onSignOut = {},
+                    onSyncNow = { connected++ },
+                    onDismissMessage = {},
+                    onSnoozePrompt = { snoozed++ },
+                )
+            }
+        }
+
+        compose.onNodeWithText("You have dhikr waiting to join the world").assertIsDisplayed()
+        compose.onNodeWithText("Connect now").assertIsDisplayed().performClick()
+        assertEquals(1, connected)
+        compose.onNodeWithText("Later").performClick()
+        assertEquals(1, snoozed)
+    }
+
+    @Test
+    fun `a first-time user is invited to connect rather than warned`() {
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(uid = "u"),
+                syncStatus = SyncStatus(backendConfigured = true, signedIn = true),
+                totals = PersonalTotals(allTimeLocal = 25_000),
+                connectPrompt = ConnectPrompt(ConnectReason.NeverConnected, 25_000, null),
+            )
+        )
+        compose.onNodeWithText("Add your dhikr to the world count").assertIsDisplayed()
+    }
+
+    @Test
+    fun `no prompt is shown when there is nothing to gain by connecting`() {
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(uid = "u"),
+                syncStatus = SyncStatus(backendConfigured = true, signedIn = true),
+                figures = RemoteFigures(globalTotal = 5_000_000, userTotal = 900),
+                totals = PersonalTotals(allTimeLocal = 900),
+                connectPrompt = null,
+            )
+        )
+        compose.onAllNodesWithText("Connect now").assertCountEquals(0)
+    }
+
+    @Test
+    fun `the board says how much has not reached the world yet`() {
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(uid = "u"),
+                syncStatus = SyncStatus(
+                    backendConfigured = true,
+                    signedIn = true,
+                    pendingOperations = 2,
+                    pendingTotal = 500,
+                ),
+                figures = RemoteFigures(globalTotal = 1_000_000, userTotal = 10_000),
+                totals = PersonalTotals(allTimeLocal = 10_500),
+            )
+        )
+        compose.scrollTo("500 of these have not joined the world count yet")
+        compose.onNodeWithText("500 of these have not joined the world count yet")
+            .assertIsDisplayed()
+    }
 }
+
 
 /** The board is a lazy list; anything below the fold has to be scrolled to before it exists. */
 private fun ComposeContentTestRule.scrollTo(text: String) {

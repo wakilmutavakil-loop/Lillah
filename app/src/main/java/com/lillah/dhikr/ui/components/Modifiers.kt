@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -35,6 +37,21 @@ fun Modifier.softShadow(
     ambientColor = color.copy(alpha = alpha * 0.7f),
     spotColor = color.copy(alpha = alpha),
 )
+
+/**
+ * A soft top-light over a gradient surface.
+ *
+ * Drawn between the background and the content, so it lifts the colour without washing out the
+ * text sitting on it. This is most of the difference between a flat coloured rectangle and
+ * something that looks like it has a light source.
+ */
+fun Modifier.sheenOverlay(): Modifier = composed {
+    val gradients = LocalAppGradients.current
+    drawWithContent {
+        drawRect(Brush.verticalGradient(gradients.sheen))
+        drawContent()
+    }
+}
 
 /** The frosted panel used for cards floating over the aurora background. */
 fun Modifier.glassSurface(shape: Shape, borderWidth: Dp = 1.dp): Modifier = composed {

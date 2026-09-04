@@ -106,18 +106,10 @@ class DhikrEditorViewModel(
     }
 
     /**
-     * Deleting removes the dhikr's recorded history along with it, which is why the UI asks first
-     * and offers archiving as the softer option.
+     * Archiving is the only way to put a dhikr away, because nothing in this app deletes anything.
+     * The row and every count against it stay exactly where they are; it simply stops appearing in
+     * the lists, and can be brought back from Manage adhkar at any time.
      */
-    fun delete(onDeleted: () -> Unit) {
-        val id = _state.value.id
-        if (id == 0L) return
-        viewModelScope.launch {
-            repository.delete(id)
-            onDeleted()
-        }
-    }
-
     fun archive(onArchived: () -> Unit) {
         val id = _state.value.id
         if (id == 0L) return

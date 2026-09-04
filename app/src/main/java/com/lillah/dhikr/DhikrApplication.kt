@@ -2,17 +2,12 @@ package com.lillah.dhikr
 
 import android.app.Application
 import com.lillah.dhikr.core.di.AppContainer
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class DhikrApplication : Application() {
 
     lateinit var container: AppContainer
         private set
-
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
@@ -23,16 +18,12 @@ class DhikrApplication : Application() {
         // and content the user has cleared out is never silently resurrected mid-session.
         // Drains the outbox in the background whenever there is something queued and an account
         // to attach it to. A no-op in a build with no backend configured.
-        container.syncRepository.start(applicationScope)
+        container.syncRepository.start(container.applicationScope)
 
-        applicationScope.launch {
+        container.applicationScope.launch {
+            // The device profile must exist before anything reads or writes profile-scoped data.
+            container.profileRepository.ensureDeviceProfile()
             container.dhikrRepository.seedIfEmpty()
-
-            // Sweep cover images no collection points at any more. Saving a cover writes the file
-            // before recording the path, so a crash in between would otherwise leave one stranded.
-            container.coverImageStore.pruneExcept(
-                container.dhikrRepository.referencedCoverPaths()
-            )
         }
     }
 

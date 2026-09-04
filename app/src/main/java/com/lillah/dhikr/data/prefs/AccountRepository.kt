@@ -30,8 +30,15 @@ data class AccountState(
     val method: AuthMethod? = null,
     val lastSyncAt: Long? = null,
     val lastSyncError: String? = null,
+    /** Which local profile's data the app is showing. 1 is the device profile. */
+    val activeProfileId: Long = DEVICE_PROFILE_ID,
+    val lastConnectPromptAt: Long = 0,
 ) {
     val isSignedIn: Boolean get() = !uid.isNullOrBlank()
+
+    companion object {
+        const val DEVICE_PROFILE_ID = 1L
+    }
 }
 
 /**
@@ -52,6 +59,8 @@ class AccountRepository(private val context: Context) {
         val method = stringPreferencesKey("auth_method")
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncError = stringPreferencesKey("last_sync_error")
+        val activeProfileId = longPreferencesKey("active_profile_id")
+        val lastConnectPromptAt = longPreferencesKey("last_connect_prompt_at")
     }
 
     val state: Flow<AccountState> = context.accountStore.data
@@ -68,6 +77,8 @@ class AccountRepository(private val context: Context) {
                 method = AuthMethod.entries.firstOrNull { it.id == prefs[Keys.method] },
                 lastSyncAt = prefs[Keys.lastSyncAt],
                 lastSyncError = prefs[Keys.lastSyncError],
+                activeProfileId = prefs[Keys.activeProfileId] ?: AccountState.DEVICE_PROFILE_ID,
+                lastConnectPromptAt = prefs[Keys.lastConnectPromptAt] ?: 0,
             )
         }
 
@@ -110,6 +121,7 @@ class AccountRepository(private val context: Context) {
      */
     suspend fun clearSignedIn() {
         context.accountStore.edit { prefs ->
+            prefs[Keys.activeProfileId] = AccountState.DEVICE_PROFILE_ID
             prefs.remove(Keys.uid)
             prefs.remove(Keys.displayName)
             prefs.remove(Keys.email)
@@ -117,6 +129,14 @@ class AccountRepository(private val context: Context) {
             prefs.remove(Keys.method)
             prefs.remove(Keys.lastSyncError)
         }
+    }
+
+    suspend fun setActiveProfile(profileId: Long) {
+        context.accountStore.edit { it[Keys.activeProfileId] = profileId }
+    }
+
+    suspend fun recordConnectPrompt(at: Long) {
+        context.accountStore.edit { it[Keys.lastConnectPromptAt] = at }
     }
 
     suspend fun recordSyncSuccess(at: Long) {

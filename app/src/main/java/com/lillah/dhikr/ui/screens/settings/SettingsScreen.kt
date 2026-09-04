@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.lillah.dhikr.core.time.grouped
-import com.lillah.dhikr.ui.components.ConfirmSheet
 import com.lillah.dhikr.ui.components.SectionHeader
 import com.lillah.dhikr.ui.components.SoftCard
 import com.lillah.dhikr.ui.components.SwitchRow
@@ -56,14 +55,10 @@ fun SettingsScreen(
     onSetDailyGoal: (Int) -> Unit,
     onManageAdhkar: () -> Unit,
     onRestoreDefaults: () -> Unit,
-    onClearToday: () -> Unit,
-    onClearHistory: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     var goalSheet by remember { mutableStateOf(false) }
-    var confirmClearToday by remember { mutableStateOf(false) }
-    var confirmClearHistory by remember { mutableStateOf(false) }
     val settings = state.settings
 
     Column(
@@ -178,27 +173,21 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(Spacing.l))
-        Group(title = "Data") {
+        Group(title = "Your data") {
             Text(
-                text = "Everything lives on this device. Nothing is uploaded, and there are no " +
-                    "accounts.",
+                text = "Everything you count is stored on this device and nowhere else. Only a " +
+                    "running total is ever sent, and only to add your contribution to the " +
+                    "worldwide count.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(Spacing.l))
-            ValueRow(
-                title = "Clear today's counts",
-                description = "Only today. Everything before it stays.",
-                value = "",
-                onClick = { confirmClearToday = true },
-            )
-            Spacer(Modifier.height(Spacing.l))
-            ValueRow(
-                title = "Clear all history",
-                description = "Every count, streak and milestone. Your adhkar stay.",
-                value = "",
-                destructive = true,
-                onClick = { confirmClearHistory = true },
+            Spacer(Modifier.height(Spacing.m))
+            Text(
+                text = "Nothing you have counted can be deleted from inside the app. There is no " +
+                    "reset, no clear history, and no way to remove a dhikr — only to archive it, " +
+                    "which keeps everything and simply puts it out of the way.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
@@ -243,34 +232,6 @@ fun SettingsScreen(
             },
         )
     }
-
-    if (confirmClearToday) {
-        ConfirmSheet(
-            title = "Clear today's counts?",
-            message = "Today goes back to zero. Every earlier day, your streak and your " +
-                "milestones are untouched.",
-            confirmLabel = "Clear today",
-            onDismiss = { confirmClearToday = false },
-            onConfirm = {
-                confirmClearToday = false
-                onClearToday()
-            },
-        )
-    }
-
-    if (confirmClearHistory) {
-        ConfirmSheet(
-            title = "Clear all history?",
-            message = "Every count you have recorded, along with your streaks and milestones. " +
-                "Your adhkar and collections stay exactly as they are. This cannot be undone.",
-            confirmLabel = "Clear everything",
-            onDismiss = { confirmClearHistory = false },
-            onConfirm = {
-                confirmClearHistory = false
-                onClearHistory()
-            },
-        )
-    }
 }
 
 @Composable
@@ -295,7 +256,6 @@ private fun ValueRow(
     value: String,
     onClick: () -> Unit,
     description: String? = null,
-    destructive: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -313,11 +273,7 @@ private fun ValueRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = if (destructive) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+                color = MaterialTheme.colorScheme.onSurface,
             )
             if (description != null) {
                 Spacer(Modifier.height(2.dp))

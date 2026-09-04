@@ -94,29 +94,15 @@ class CollectionDetailViewModel(
     fun chooseCover(uri: Uri) {
         viewModelScope.launch {
             savingCover.value = true
-            val previous = uiState.value.collection?.coverImagePath
             val path = coverStore.save(collectionId, uri)
-            if (path != null) {
-                dhikrRepository.setCollectionCover(collectionId, path)
-                // Only remove the old file once the new one is safely recorded.
-                coverStore.delete(previous)
-            }
+            if (path != null) dhikrRepository.setCollectionCover(collectionId, path)
             savingCover.value = false
         }
     }
 
+    /** Returns to the built-in artwork. The previously chosen image file is kept on disk. */
     fun clearCover() {
-        viewModelScope.launch {
-            val previous = uiState.value.collection?.coverImagePath
-            dhikrRepository.setCollectionCover(collectionId, null)
-            coverStore.delete(previous)
-        }
+        viewModelScope.launch { dhikrRepository.setCollectionCover(collectionId, null) }
     }
 
-    /** Clears the live rounds in this collection. Today's recorded counts are left untouched. */
-    fun resetRounds() {
-        viewModelScope.launch {
-            uiState.value.items.forEach { dhikrRepository.resetRound(it.dhikr.id) }
-        }
-    }
 }

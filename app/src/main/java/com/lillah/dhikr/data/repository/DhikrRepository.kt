@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -43,8 +44,12 @@ class DhikrRepository(
     private val countDao: CountDao,
     private val counterDao: CounterDao,
     private val syncDao: SyncDao,
+    private val profiles: ProfileRepository,
     private val clock: AppClock,
 ) {
+
+    /** The profile whose data every query below is scoped to. */
+    private val profileId: StateFlow<Long> get() = profiles.activeProfileId
 
     /**
      * Serialises the live round's read-modify-write. Rapid tapping is the normal case here, and
@@ -53,14 +58,17 @@ class DhikrRepository(
      */
     private val roundMutex = Mutex()
 
-    fun observeAll(): Flow<List<Dhikr>> =
-        dhikrDao.observeActive().map { list -> list.map { it.toDomain() } }
+    fun observeAll(): Flow<List<Dhikr>> = profileId.flatMapLatest { pid ->
+        dhikrDao.observeActive(pid).map { list -> list.map { it.toDomain() } }
+    }
 
-    fun observeArchived(): Flow<List<Dhikr>> =
-        dhikrDao.observeArchived().map { list -> list.map { it.toDomain() } }
+    fun observeArchived(): Flow<List<Dhikr>> = profileId.flatMapLatest { pid ->
+        dhikrDao.observeArchived(pid).map { list -> list.map { it.toDomain() } }
+    }
 
-    fun observeFavorites(): Flow<List<Dhikr>> =
-        dhikrDao.observeFavorites().map { list -> list.map { it.toDomain() } }
+    fun observeFavorites(): Flow<List<Dhikr>> = profileId.flatMapLatest { pid ->
+        dhikrDao.observeFavorites(pid).map { list -> list.map { it.toDomain() } }
+    }
 
     fun observeByCollection(collectionId: Long): Flow<List<Dhikr>> =
         dhikrDao.observeByCollection(collectionId).map { list -> list.map { it.toDomain() } }
@@ -70,8 +78,9 @@ class DhikrRepository(
 
     suspend fun getDhikr(id: Long): Dhikr? = dhikrDao.getById(id)?.toDomain()
 
-    fun observeCollections(): Flow<List<DhikrCollection>> =
-        collectionDao.observeAll().map { list -> list.map { it.toDomain() } }
+    fun observeCollections(): Flow<List<DhikrCollection>> = profileId.flatMapLatest { pid ->
+        collectionDao.observeAll(pid).map { list -> list.map { it.toDomain() } }
+    }
 
     fun observeCollection(id: Long): Flow<DhikrCollection?> =
         collectionDao.observeById(id).map { it?.toDomain() }
@@ -79,13 +88,14 @@ class DhikrRepository(
     suspend fun getCollection(id: Long): DhikrCollection? = collectionDao.getById(id)?.toDomain()
 
     suspend fun collectionIdOfKind(kind: CollectionKind): Long? =
-        collectionDao.getByKind(kind.name)?.id
+        collectionDao.getByKind(profileId.value, kind.name)?.id
 
     /** Collections joined with today's completion, ready for the Collections grid. */
-    fun observeCollectionProgress(): Flow<List<CollectionProgress>> = today().flatMapLatest { day ->
+    fun observeCollectionProgress(): Flow<List<CollectionProgress>> =
+        combine(profileId, today()) { pid, day -> pid to day }.flatMapLatest { (pid, day) ->
         combine(
-            collectionDao.observeAll(),
-            countDao.observeCollectionCompletions(day),
+            collectionDao.observeAll(pid),
+            countDao.observeCollectionCompletions(pid, day),
         ) { collections, completions ->
             val byId = completions.associateBy { it.collectionId }
             collections.map { entity ->
@@ -135,9 +145,11 @@ class DhikrRepository(
         database.withTransaction {
             dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
             countDao.addCount(dhikrId, today, delta, now)
-            syncDao.enqueue(countOperation(entity.id, entity.name, today, delta.toLong(), now))
+            syncDao.enqueue(
+                countOperation(entity.id, entity.name, entity.profileId, today, delta.toLong(), now)
+            )
         }
-        counterDao.raiseTo(CounterKeys.BEST_SESSION, next.toLong())
+        counterDao.raiseTo(entity.profileId, CounterKeys.BEST_SESSION, next.toLong())
 
         CountResult(next, target, completed, rounds)
     }
@@ -169,7 +181,9 @@ class DhikrRepository(
         database.withTransaction {
             dhikrDao.updateRoundState(dhikrId, next, rounds, today, now)
             countDao.addCount(dhikrId, today, -1, now)
-            syncDao.enqueue(countOperation(entity.id, entity.name, today, -1L, now))
+            syncDao.enqueue(
+                countOperation(entity.id, entity.name, entity.profileId, today, -1L, now)
+            )
         }
         CountResult(next, target, false, rounds)
     }
@@ -181,6 +195,7 @@ class DhikrRepository(
     private fun countOperation(
         dhikrId: Long,
         dhikrName: String,
+        profileId: Long,
         epochDay: Long,
         delta: Long,
         now: Long,
@@ -193,6 +208,7 @@ class DhikrRepository(
         delta = delta,
         createdAt = now,
         state = SyncState.PENDING.name,
+        profileId = profileId,
     )
 
     /** Clears the live round only. Today's recorded total is history and is left alone. */
@@ -202,16 +218,17 @@ class DhikrRepository(
 
     suspend fun upsert(dhikr: Dhikr): Long {
         val isNew = dhikr.id == 0L
+        val pid = profileId.value
         val entity = dhikr.toEntity().copy(
-            sortOrder = if (isNew) dhikrDao.maxSortOrder() + 1 else dhikr.sortOrder,
+            sortOrder = if (isNew) dhikrDao.maxSortOrder(pid) + 1 else dhikr.sortOrder,
             createdAt = if (isNew) clock.nowMillis() else dhikr.createdAt,
+            profileId = if (isNew) pid else dhikr.profileId,
         )
         val id = dhikrDao.insert(entity)
-        if (isNew && !dhikr.isBuiltIn) counterDao.increment(CounterKeys.CUSTOM_DHIKR)
+        if (isNew && !dhikr.isBuiltIn) counterDao.increment(pid, CounterKeys.CUSTOM_DHIKR)
         return if (id > 0) id else dhikr.id
     }
 
-    suspend fun delete(dhikrId: Long) = dhikrDao.deleteById(dhikrId)
     suspend fun setArchived(dhikrId: Long, archived: Boolean) =
         dhikrDao.setArchived(dhikrId, archived)
     suspend fun setFavorite(dhikrId: Long, favorite: Boolean) =
@@ -220,15 +237,21 @@ class DhikrRepository(
 
     suspend fun upsertCollection(collection: DhikrCollection): Long {
         val isNew = collection.id == 0L
+        val pid = profileId.value
         val entity = collection.toEntity().copy(
-            sortOrder = if (isNew) collectionDao.maxSortOrder() + 1 else collection.sortOrder,
+            sortOrder = if (isNew) collectionDao.maxSortOrder(pid) + 1 else collection.sortOrder,
+            profileId = if (isNew) pid else collection.profileId,
         )
         val id = collectionDao.insert(entity)
-        if (isNew && !collection.isBuiltIn) counterDao.increment(CounterKeys.CUSTOM_COLLECTIONS)
+        if (isNew && !collection.isBuiltIn) {
+            counterDao.increment(pid, CounterKeys.CUSTOM_COLLECTIONS)
+        }
         return if (id > 0) id else collection.id
     }
 
-    suspend fun deleteCollection(id: Long) = collectionDao.deleteById(id)
+    suspend fun setCollectionArchived(id: Long, archived: Boolean) =
+        collectionDao.setArchived(id, archived)
+
     suspend fun setCollectionCover(id: Long, path: String?) = collectionDao.setCoverImage(id, path)
 
     /** Every cover still referenced by a collection, for pruning orphaned files. */
@@ -237,9 +260,9 @@ class DhikrRepository(
     // ------------------------------------------------------------------ seeding
 
     /** Inserts the shipped content. Safe to call again: it only adds what is missing. */
-    suspend fun seedIfEmpty() {
-        if (collectionDao.count() > 0 || dhikrDao.count() > 0) return
-        installSeedContent()
+    suspend fun seedIfEmpty(profileId: Long = this.profileId.value) {
+        if (collectionDao.count(profileId) > 0 || dhikrDao.count(profileId) > 0) return
+        installSeedContent(profileId)
     }
 
     /**
@@ -250,33 +273,40 @@ class DhikrRepository(
      *
      * @return how many adhkar were restored.
      */
-    suspend fun restoreDefaults(): Int = installSeedContent()
+    suspend fun restoreDefaults(): Int = installSeedContent(profileId.value)
 
-    private suspend fun installSeedContent(): Int {
-        val morningId = ensureCollection(CollectionKind.Morning, seedIndex = 0)
-        val eveningId = ensureCollection(CollectionKind.Evening, seedIndex = 1)
-        val essentialsId = ensureCollection(CollectionKind.Essentials, seedIndex = 2)
-        val afterPrayerId = ensureCollection(CollectionKind.AfterPrayer, seedIndex = 3)
+    private suspend fun installSeedContent(profileId: Long): Int {
+        val morningId = ensureCollection(profileId, CollectionKind.Morning, seedIndex = 0)
+        val eveningId = ensureCollection(profileId, CollectionKind.Evening, seedIndex = 1)
+        val essentialsId = ensureCollection(profileId, CollectionKind.Essentials, seedIndex = 2)
+        val afterPrayerId = ensureCollection(profileId, CollectionKind.AfterPrayer, seedIndex = 3)
 
-        return addMissing(essentialsId, SeedData.essentials(essentialsId)) +
-            addMissing(morningId, SeedData.morning(morningId)) +
-            addMissing(eveningId, SeedData.evening(eveningId)) +
-            addMissing(afterPrayerId, SeedData.afterPrayer(afterPrayerId))
+        return addMissing(profileId, essentialsId, SeedData.essentials(essentialsId)) +
+            addMissing(profileId, morningId, SeedData.morning(morningId)) +
+            addMissing(profileId, eveningId, SeedData.evening(eveningId)) +
+            addMissing(profileId, afterPrayerId, SeedData.afterPrayer(afterPrayerId))
     }
 
     private suspend fun addMissing(
+        profileId: Long,
         collectionId: Long,
         seeds: List<com.lillah.dhikr.data.local.entity.DhikrEntity>,
     ): Int {
         val present = dhikrDao.namesInCollection(collectionId).toHashSet()
-        val missing = seeds.filter { it.name !in present }
+        val missing = seeds
+            .filter { it.name !in present }
+            .map { it.copy(profileId = profileId) }
         if (missing.isNotEmpty()) dhikrDao.insertAll(missing)
         return missing.size
     }
 
-    private suspend fun ensureCollection(kind: CollectionKind, seedIndex: Int): Long {
-        collectionDao.getByKind(kind.name)?.let { return it.id }
-        return collectionDao.insert(SeedData.collections[seedIndex])
+    private suspend fun ensureCollection(
+        profileId: Long,
+        kind: CollectionKind,
+        seedIndex: Int,
+    ): Long {
+        collectionDao.getByKind(profileId, kind.name)?.let { return it.id }
+        return collectionDao.insert(SeedData.collections[seedIndex].copy(profileId = profileId))
     }
 }
 

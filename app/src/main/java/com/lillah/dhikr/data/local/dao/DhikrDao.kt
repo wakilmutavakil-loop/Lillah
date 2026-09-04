@@ -12,14 +12,23 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface DhikrDao {
 
-    @Query("SELECT * FROM dhikr WHERE isArchived = 0 ORDER BY sortOrder ASC, id ASC")
-    fun observeActive(): Flow<List<DhikrEntity>>
+    @Query(
+        "SELECT * FROM dhikr WHERE profileId = :profileId AND isArchived = 0 " +
+            "ORDER BY sortOrder ASC, id ASC"
+    )
+    fun observeActive(profileId: Long): Flow<List<DhikrEntity>>
 
-    @Query("SELECT * FROM dhikr WHERE isArchived = 1 ORDER BY sortOrder ASC, id ASC")
-    fun observeArchived(): Flow<List<DhikrEntity>>
+    @Query(
+        "SELECT * FROM dhikr WHERE profileId = :profileId AND isArchived = 1 " +
+            "ORDER BY sortOrder ASC, id ASC"
+    )
+    fun observeArchived(profileId: Long): Flow<List<DhikrEntity>>
 
-    @Query("SELECT * FROM dhikr WHERE isArchived = 0 AND isFavorite = 1 ORDER BY sortOrder ASC")
-    fun observeFavorites(): Flow<List<DhikrEntity>>
+    @Query(
+        "SELECT * FROM dhikr WHERE profileId = :profileId AND isArchived = 0 AND isFavorite = 1 " +
+            "ORDER BY sortOrder ASC"
+    )
+    fun observeFavorites(profileId: Long): Flow<List<DhikrEntity>>
 
     @Query(
         "SELECT * FROM dhikr WHERE collectionId = :collectionId AND isArchived = 0 " +
@@ -33,11 +42,14 @@ interface DhikrDao {
     @Query("SELECT * FROM dhikr WHERE id = :id")
     suspend fun getById(id: Long): DhikrEntity?
 
-    @Query("SELECT COUNT(*) FROM dhikr")
-    suspend fun count(): Int
+    @Query("SELECT COUNT(*) FROM dhikr WHERE profileId = :profileId")
+    suspend fun count(profileId: Long): Int
 
-    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM dhikr")
-    suspend fun maxSortOrder(): Int
+    @Query("SELECT COUNT(*) FROM dhikr")
+    suspend fun countAllProfiles(): Int
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM dhikr WHERE profileId = :profileId")
+    suspend fun maxSortOrder(profileId: Long): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: DhikrEntity): Long
@@ -47,9 +59,6 @@ interface DhikrDao {
 
     @Update
     suspend fun update(entity: DhikrEntity)
-
-    @Query("DELETE FROM dhikr WHERE id = :id")
-    suspend fun deleteById(id: Long)
 
     @Query("UPDATE dhikr SET isArchived = :archived WHERE id = :id")
     suspend fun setArchived(id: Long, archived: Boolean)
@@ -85,4 +94,7 @@ interface DhikrDao {
 
     @Query("SELECT name FROM dhikr WHERE collectionId = :collectionId")
     suspend fun namesInCollection(collectionId: Long): List<String>
+
+    @Query("SELECT COUNT(*) FROM dhikr WHERE profileId = :profileId AND isBuiltIn = 0")
+    suspend fun countCustom(profileId: Long): Int
 }

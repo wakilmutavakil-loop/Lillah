@@ -20,16 +20,21 @@ interface SyncDao {
     suspend fun enqueue(operation: SyncOperationEntity): Long
 
     @Query(
-        "SELECT * FROM sync_operations WHERE state != 'SYNCED' " +
+        "SELECT * FROM sync_operations WHERE profileId = :profileId AND state != 'SYNCED' " +
             "ORDER BY createdAt ASC LIMIT :limit"
     )
-    suspend fun pending(limit: Int = 200): List<SyncOperationEntity>
+    suspend fun pending(profileId: Long, limit: Int = 200): List<SyncOperationEntity>
 
-    @Query("SELECT COUNT(*) FROM sync_operations WHERE state != 'SYNCED'")
-    fun observePendingCount(): Flow<Int>
+    @Query(
+        "SELECT COUNT(*) FROM sync_operations WHERE profileId = :profileId AND state != 'SYNCED'"
+    )
+    fun observePendingCount(profileId: Long): Flow<Int>
 
-    @Query("SELECT COALESCE(SUM(delta), 0) FROM sync_operations WHERE state != 'SYNCED'")
-    fun observePendingTotal(): Flow<Long>
+    @Query(
+        "SELECT COALESCE(SUM(delta), 0) FROM sync_operations " +
+            "WHERE profileId = :profileId AND state != 'SYNCED'"
+    )
+    fun observePendingTotal(profileId: Long): Flow<Long>
 
     @Query("SELECT EXISTS(SELECT 1 FROM sync_operations WHERE opId = :opId)")
     suspend fun exists(opId: String): Boolean
@@ -51,15 +56,11 @@ interface SyncDao {
      * from the local lifetime total yields exactly the history that predates the outbox — the
      * amount a device upgrading from v1.0.0 needs to claim once.
      */
-    @Query("SELECT COALESCE(SUM(delta), 0) FROM sync_operations WHERE kind = 'COUNT_DELTA'")
-    suspend fun countDeltaTotal(): Long
-
-    /**
-     * Only ever called when the user explicitly asks to erase history. Sync state is never cleared
-     * on sign-out — a signed-out device keeps its queue so nothing is lost if they sign back in.
-     */
-    @Query("DELETE FROM sync_operations")
-    suspend fun clearAll()
+    @Query(
+        "SELECT COALESCE(SUM(delta), 0) FROM sync_operations " +
+            "WHERE profileId = :profileId AND kind = 'COUNT_DELTA'"
+    )
+    suspend fun countDeltaTotal(profileId: Long): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putSnapshot(snapshot: RemoteSnapshotEntity)
@@ -69,7 +70,4 @@ interface SyncDao {
 
     @Query("SELECT * FROM remote_snapshot WHERE id = 0")
     suspend fun snapshot(): RemoteSnapshotEntity?
-
-    @Query("DELETE FROM remote_snapshot")
-    suspend fun clearSnapshot()
 }

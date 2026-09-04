@@ -33,6 +33,7 @@ data class DhikrCollection(
     val accentIndex: Int = 0,
     val sortOrder: Int = 0,
     val isBuiltIn: Boolean = false,
+    val profileId: Long = 1,
 )
 
 /** A collection with the day's progress folded in, ready for the Collections grid. */

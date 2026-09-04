@@ -125,7 +125,7 @@ class ScreensRenderTest {
                     ),
                     onBack = {}, onOpenDhikr = {}, onCountOne = {}, onUndoOne = {},
                     onPickCover = {}, onClearCover = {}, onEditCollection = {},
-                    onAddDhikr = {}, onResetRounds = {},
+                    onAddDhikr = {},
                 )
             }
         }
@@ -233,7 +233,6 @@ class ScreensRenderTest {
                     onToggleSound = {}, onToggleKeepScreenOn = {}, onToggleVolumeKeys = {},
                     onToggleArabic = {}, onToggleTransliteration = {}, onToggleMeaning = {},
                     onSetDailyGoal = {}, onManageAdhkar = {}, onRestoreDefaults = {},
-                    onClearToday = {}, onClearHistory = {},
                 )
             }
         }

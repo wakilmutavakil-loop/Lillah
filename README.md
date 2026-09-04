@@ -3,7 +3,7 @@
 A digital tasbih and daily remembrance app for Android. Offline-first, and built so that keeping
 a habit feels better than breaking one.
 
-<sub>Package `com.lillah.dhikr` · v1.1.0 (versionCode 2) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
+<sub>Package `com.lillah.dhikr` · v1.2.0 (versionCode 3) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
 
 ---
 
@@ -24,39 +24,75 @@ adhkar and group them into collections with their own artwork or a photo of thei
 bars against the user's own previous week, and a month heatmap. Lifetime totals are framed as a
 garden that grows and never shrinks. Twenty-one milestones show their progress while still locked.
 
-**Themes.** Seven palettes, each chosen from a gallery where every card paints itself in its own
+**Themes.** Nine palettes, each chosen from a gallery where every card paints itself in its own
 colours. The whole app cross-fades into the choice. Light, dark, and system.
 
-**Universal Dhikr.** A community board showing the worldwide total, this account's contribution,
-and its share of that total — recomputed from live figures rather than stored. Beneath it, today,
-this week, this month, this year and all time.
+**Universal Dhikr.** A community board showing the worldwide total, your contribution, and your
+share of that total — recomputed from live figures rather than stored. Beneath it, today, this
+week, this month, this year and all time. When there is something to add or the world figure has
+gone stale, it invites you to connect; it never insists.
 
-**Accounts and sync.** Optional Google or Facebook sign-in. Counting never waits on the network:
-every count is written locally and queued, and the queue drains when it can.
+**Accounts, and where your data lives.** Optional Google or Facebook sign-in identifies **which
+local profile** to show. Everything you count is stored on the device and stays there — several
+people can share a phone, each with their own history, and none of them can see another's. The
+only thing that ever leaves is a running total, and only to add your contribution to the
+worldwide count.
 
 **Guidebook.** Seven short articles on dhikr and on the app itself, written to be read.
 
 ---
 
-## Upgrading from v1.0.0
+## Nothing here can delete your data
 
-Installing v1.1.0 over v1.0.0 is an ordinary update. There is no uninstall step, and nothing is
-reset. Three things make that true, and all three are verified rather than assumed:
+This is the strongest guarantee the app makes, and it is enforced structurally rather than by
+being careful.
+
+There is no delete. Not in Settings, not in the editors, not in the data layer. `grep -rn "DELETE
+FROM" app/src/main/java` returns nothing, because no such query exists. Every repository method
+that removed something is gone; every DAO query that removed something is gone. Archiving is the
+only way to put a dhikr or a collection out of sight, and it keeps the row and every count against
+it. A replaced cover image is kept on disk rather than overwritten away.
+
+`fallbackToDestructiveMigration` is absent and commented as permanently unwelcome: a migration gap
+must fail loudly, not hand somebody an empty app.
+
+The trade-off is real and deliberate: a dhikr created by mistake can only be archived, never
+removed, and there is no in-app way to honour a "delete my data" request. Uninstalling remains the
+only way to remove anything, and that is the operating system's doing, not the app's.
+
+---
+
+## Upgrading
+
+Installing v1.2.0 over v1.0.0 **or** v1.1.0 is an ordinary update. There is no uninstall step, and
+nothing is reset. Three things make that true, and all three are verified against the built APK
+rather than assumed:
 
 | | |
 | --- | --- |
-| **Same package id** | `com.lillah.dhikr`, unchanged |
-| **Higher versionCode** | 1 → 2 |
+| **Same package id** | `com.lillah.dhikr`, unchanged since v1.0.0 |
+| **Higher versionCode** | 1 → 2 → 3 |
 | **Same signing key** | SHA-256 `35:DA:2A:FB…`, identical to the released v1.0.0 APK |
 
-The database migration is additive: version 2 creates two new tables and alters nothing.
-`fallbackToDestructiveMigration` is absent by design, so a migration gap would fail loudly rather
-than silently emptying the app.
+Both migrations are additive. Version 2 added two tables. Version 3 adds profiles and a
+`profileId` column defaulting to 1 — the device profile, which the migration creates and which
+every existing row therefore already belongs to. Nobody's history moves, because there is only one
+profile for it to be in.
 
-`MigrationV1ToV2Test` runs against a database built from the released v1 schema's own DDL and
-identity hash. It asserts that 25,000 counts over 100 days survive exactly, that a half-finished
-round is not reset, that adding 5,000 afterwards gives 30,000 with the earlier days untouched, and
-that empty, sparse, 4,000-row and already-migrated databases all open cleanly.
+Achievements and counters needed a composite key, and SQLite cannot add one without rebuilding the
+table. Rather than rebuild a table holding user data, their rows are **copied** into new
+per-profile tables and the originals are left exactly where they are — still populated, never
+written to again, never dropped.
+
+Two test suites run against real databases built from the released schemas' own DDL and identity
+hashes:
+
+- `MigrationV1ToLatestTest` — 25,000 counts over 100 days survive the whole chain exactly, a
+  half-finished round is not reset, adding 5,000 afterwards gives 30,000 with earlier days
+  untouched, and empty, sparse, 4,000-row and already-migrated databases all open cleanly.
+- `MigrationV2ToV3Test` — a v1.1.0 database keeps its counts, achievements, counters and sync
+  queue; the device profile is created; and the pre-v3 tables are asserted to still hold their
+  rows afterwards.
 
 ### Signing and upgrade continuity
 
@@ -131,9 +167,27 @@ per-dhikr-per-day count ledger that every statistic is derived from. Anything re
 re-derived; only facts with no durable trace (how many times a collection was finished; how many
 days a goal that has since changed was met) are stored as counters.
 
+### Profiles
+
+Signing in decides **which local profile** is on screen, not where the data goes.
+
+Profile 1 is the device profile and always exists. The first account to sign in *adopts* it rather
+than starting from zero, which is what makes an upgrade invisible: somebody with 25,000 dhikr from
+before accounts existed signs in and still has 25,000. A different account signing in on the same
+phone gets a profile of its own, seeded with its own copy of the shipped adhkar and completely
+isolated — every query in the data layer is scoped by `profileId`, and the count aggregates join
+through `dhikr` so one person's totals cannot include another's. Signing out returns to the device
+profile; it hides data and never removes it.
+
+`ProfileIsolationTest` covers all of it: adoption, isolation, switching back and forth, repeated
+sign-ins not duplicating profiles, and milestones not being inherited.
+
 ### Sync
 
-Counting is local and immediate; the cloud is downstream of it and never in the way.
+Counting is local and immediate; the network is downstream of it and never in the way.
+
+Only numbers are uploaded — a count and a date. Which dhikr somebody said, and how often, never
+leaves the device.
 
 Every count writes two rows in **one transaction**: the day ledger, and an append-only operation in
 an outbox. A count that reached the device but not the queue would never reach the cloud, so
@@ -169,8 +223,17 @@ Setup, data layout and the rules are documented in [`backend/README.md`](backend
 
 **The app builds and runs with no backend at all.** Firebase is initialised programmatically from a
 gitignored `backend.properties` rather than through the google-services Gradle plugin, which fails
-the build outright when its config file is missing. Without credentials the app is exactly the
-offline counter v1.0.0 was, and the Universal Dhikr tab says so rather than showing an error.
+the build outright when its config file is missing. Without credentials the app is a complete local
+counter — profiles, statistics, milestones and all — and the Universal Dhikr tab says so plainly
+rather than showing an error.
+
+### Themes
+
+Nine palettes, each authored as five seed colours from which the full Material 3 scheme is derived
+for light and dark. The gradients shift hue rather than only lightness, surfaces step through six
+distinguishable levels instead of four near-identical ones, and every gradient surface carries a
+soft top-light — which is most of the difference between a coloured rectangle and something that
+looks lit.
 
 ### Decisions worth knowing about
 
@@ -213,7 +276,7 @@ the rest.
 ```bash
 ./gradlew :app:assembleDebug     # debug APK
 ./gradlew :app:assembleRelease   # release APK, R8-shrunk (~4 MB)
-./gradlew :app:testDebugUnitTest # 81 unit, migration, sync and screen tests
+./gradlew :app:testDebugUnitTest # 97 unit, migration, profile, sync and screen tests
 ```
 
 Cloud features need a `backend.properties`; see [`backend/README.md`](backend/README.md). Without
@@ -238,10 +301,12 @@ keyPassword=...
 
 ## Tests
 
-81 tests, all JVM — no device or emulator needed.
+97 tests, all JVM — no device or emulator needed.
 
-- **Migration** — a real v1 database, built from the released schema's DDL and identity hash,
-  upgraded and read back through the production DAOs. See "Upgrading from v1.0.0" above.
+- **Migration** — real v1 and v2 databases, built from the released schemas' own DDL and identity
+  hashes, upgraded and read back through the production DAOs. See "Upgrading" above.
+- **Profiles** — adoption, isolation between people sharing a phone, switching accounts, and
+  seeding.
 - **Sync** — an in-memory database against a fake backend that keys operations by id the way
   Firestore does: retries do not double count, a failed push keeps every operation queued, signing
   out leaves the queue intact, and the baseline claim is idempotent across repeated sign-ins.
@@ -255,7 +320,8 @@ keyPassword=...
   actually in Arabic script, the after-prayer tasbih keeping its traditional counts.
 - **UI** — every screen rendered under Robolectric, including the states easiest to get wrong: an
   empty collection list, a fully complete collection, no history at all, all seven palettes, and
-  the Universal board signed in, signed out, mid-sync and with no backend configured.
+  the Universal board signed in, signed out, mid-sync, prompting to connect, and with no backend
+  configured.
 
 ---
 
@@ -269,9 +335,9 @@ Deliberately left in place for what comes next:
   `supportsRtl`.
 - **Widgets and reminders** — the same repositories serve a Glance widget or a scheduled worker
   without change.
-- **Cross-device history** — the account total is cloud-authoritative today, while per-day history
-  stays on the device that recorded it. Merging full histories across devices would build on the
-  same operation log, which already carries everything needed to do it.
+- **Cross-device history** — counting is deliberately device-local, so a second phone starts a
+  fresh history for the same account. The operation log already carries what a future sync would
+  need if that ever becomes wanted.
 
 ---
 

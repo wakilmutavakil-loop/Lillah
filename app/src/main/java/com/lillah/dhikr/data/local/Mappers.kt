@@ -28,6 +28,7 @@ fun DhikrEntity.toDomain(): Dhikr = Dhikr(
     roundsEpochDay = roundsEpochDay,
     lastCountedAt = lastCountedAt,
     createdAt = createdAt,
+    profileId = profileId,
 )
 
 fun Dhikr.toEntity(): DhikrEntity = DhikrEntity(
@@ -51,6 +52,7 @@ fun Dhikr.toEntity(): DhikrEntity = DhikrEntity(
     roundsEpochDay = roundsEpochDay,
     lastCountedAt = lastCountedAt,
     createdAt = createdAt,
+    profileId = profileId,
 )
 
 fun CollectionEntity.toDomain(): DhikrCollection = DhikrCollection(
@@ -64,6 +66,7 @@ fun CollectionEntity.toDomain(): DhikrCollection = DhikrCollection(
     accentIndex = accentIndex,
     sortOrder = sortOrder,
     isBuiltIn = isBuiltIn,
+    profileId = profileId,
 )
 
 fun DhikrCollection.toEntity(): CollectionEntity = CollectionEntity(
@@ -77,4 +80,5 @@ fun DhikrCollection.toEntity(): CollectionEntity = CollectionEntity(
     accentIndex = accentIndex,
     sortOrder = sortOrder,
     isBuiltIn = isBuiltIn,
+    profileId = profileId,
 )

@@ -16,8 +16,12 @@ import com.lillah.dhikr.data.prefs.AccountRepository
 import com.lillah.dhikr.data.prefs.SettingsRepository
 import com.lillah.dhikr.data.repository.DhikrRepository
 import com.lillah.dhikr.data.repository.GamificationRepository
+import com.lillah.dhikr.data.repository.ProfileRepository
 import com.lillah.dhikr.data.repository.StatsRepository
 import com.lillah.dhikr.data.repository.SyncRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
@@ -32,6 +36,13 @@ import kotlinx.coroutines.flow.SharedFlow
 class AppContainer(private val context: Context) {
 
     val clock: AppClock = SystemAppClock()
+
+    /**
+     * Process-lifetime scope. Owned here rather than in the Application so repositories that need
+     * to hold state across the app's life can be constructed with it.
+     */
+    val applicationScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(context) }
 
@@ -48,6 +59,15 @@ class AppContainer(private val context: Context) {
 
     private val database: DhikrDatabase by lazy { DhikrDatabase.build(context) }
 
+    val profileRepository: ProfileRepository by lazy {
+        ProfileRepository(
+            profileDao = database.profileDao(),
+            accountRepository = accountRepository,
+            clock = clock,
+            scope = applicationScope,
+        )
+    }
+
     val dhikrRepository: DhikrRepository by lazy {
         DhikrRepository(
             database = database,
@@ -56,12 +76,17 @@ class AppContainer(private val context: Context) {
             countDao = database.countDao(),
             counterDao = database.counterDao(),
             syncDao = database.syncDao(),
+            profiles = profileRepository,
             clock = clock,
         )
     }
 
     val statsRepository: StatsRepository by lazy {
-        StatsRepository(countDao = database.countDao(), clock = clock)
+        StatsRepository(
+            countDao = database.countDao(),
+            profiles = profileRepository,
+            clock = clock,
+        )
     }
 
     val gamificationRepository: GamificationRepository by lazy {
@@ -70,6 +95,7 @@ class AppContainer(private val context: Context) {
             counterDao = database.counterDao(),
             countDao = database.countDao(),
             dhikrRepository = dhikrRepository,
+            profiles = profileRepository,
             clock = clock,
         )
     }
@@ -79,6 +105,7 @@ class AppContainer(private val context: Context) {
             syncDao = database.syncDao(),
             countDao = database.countDao(),
             accountRepository = accountRepository,
+            profiles = profileRepository,
             backend = backend,
             clock = clock,
         )

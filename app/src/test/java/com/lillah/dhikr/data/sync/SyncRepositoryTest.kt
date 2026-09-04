@@ -8,9 +8,12 @@ import com.lillah.dhikr.data.local.DhikrDatabase
 import com.lillah.dhikr.data.local.entity.DhikrEntity
 import com.lillah.dhikr.data.prefs.AccountRepository
 import com.lillah.dhikr.data.repository.DhikrRepository
+import com.lillah.dhikr.data.repository.ProfileRepository
 import com.lillah.dhikr.data.repository.SyncRepository
 import com.lillah.dhikr.domain.sync.AuthMethod
 import com.lillah.dhikr.domain.sync.SyncOperationKind
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -43,6 +46,8 @@ class SyncRepositoryTest {
     private lateinit var accountRepository: AccountRepository
     private lateinit var backend: FakeBackend
     private val clock = FixedClock()
+    private lateinit var profileRepository: ProfileRepository
+    private val DEVICE = 1L
 
     @Before
     fun setUp(): Unit = runBlocking {
@@ -54,6 +59,14 @@ class SyncRepositoryTest {
         accountRepository = AccountRepository(context)
         accountRepository.clearSignedIn()
 
+        profileRepository = ProfileRepository(
+            profileDao = database.profileDao(),
+            accountRepository = accountRepository,
+            clock = clock,
+            scope = CoroutineScope(Dispatchers.Unconfined),
+        )
+        profileRepository.ensureDeviceProfile()
+
         dhikrRepository = DhikrRepository(
             database = database,
             dhikrDao = database.dhikrDao(),
@@ -61,17 +74,25 @@ class SyncRepositoryTest {
             countDao = database.countDao(),
             counterDao = database.counterDao(),
             syncDao = database.syncDao(),
+            profiles = profileRepository,
             clock = clock,
         )
         syncRepository = SyncRepository(
             syncDao = database.syncDao(),
             countDao = database.countDao(),
             accountRepository = accountRepository,
+            profiles = profileRepository,
             backend = backend,
             clock = clock,
         )
         database.dhikrDao().insert(
-            DhikrEntity(id = 1, name = "SubhanAllah", targetCount = 33, createdAt = 0)
+            DhikrEntity(
+                id = 1,
+                name = "SubhanAllah",
+                targetCount = 33,
+                createdAt = 0,
+                profileId = DEVICE,
+            )
         )
     }
 
@@ -90,11 +111,11 @@ class SyncRepositoryTest {
     @Test
     fun `each count queues exactly one operation`() = runBlocking {
         count(10)
-        val pending = database.syncDao().pending()
+        val pending = database.syncDao().pending(DEVICE)
         assertEquals(10, pending.size)
         assertEquals("operation ids must be unique", 10, pending.map { it.opId }.toSet().size)
         assertTrue(pending.all { it.kind == SyncOperationKind.COUNT_DELTA.name })
-        assertEquals(10L, database.syncDao().observePendingTotal().first())
+        assertEquals(10L, database.syncDao().observePendingTotal(DEVICE).first())
     }
 
     @Test
@@ -102,22 +123,22 @@ class SyncRepositoryTest {
         count(5)
         dhikrRepository.decrement(1)
 
-        val pending = database.syncDao().pending()
+        val pending = database.syncDao().pending(DEVICE)
         assertEquals("nothing is ever removed from the outbox", 6, pending.size)
-        assertEquals(4L, database.syncDao().observePendingTotal().first())
-        assertEquals(4L, database.countDao().lifetimeTotal())
+        assertEquals(4L, database.syncDao().observePendingTotal(DEVICE).first())
+        assertEquals(4L, database.countDao().lifetimeTotal(DEVICE))
     }
 
     @Test
     fun `counting offline then syncing uploads the exact total`() = runBlocking {
         signIn()
         count(500)
-        assertEquals(500L, database.countDao().lifetimeTotal())
+        assertEquals(500L, database.countDao().lifetimeTotal(DEVICE))
 
         assertTrue(syncRepository.syncNow().isSuccess)
 
         assertEquals(500L, backend.serverUserTotal)
-        assertEquals(0, database.syncDao().pending().size)
+        assertEquals(0, database.syncDao().pending(DEVICE).size)
     }
 
     @Test
@@ -128,14 +149,14 @@ class SyncRepositoryTest {
 
         assertTrue(syncRepository.syncNow().isFailure)
 
-        assertEquals("a failure must never discard local work", 120, database.syncDao().pending().size)
-        assertEquals(120L, database.countDao().lifetimeTotal())
+        assertEquals("a failure must never discard local work", 120, database.syncDao().pending(DEVICE).size)
+        assertEquals(120L, database.countDao().lifetimeTotal(DEVICE))
         assertEquals(0L, backend.serverUserTotal)
 
         // The retry succeeds and the total is right — not doubled by the earlier attempt.
         assertTrue(syncRepository.syncNow().isSuccess)
         assertEquals(120L, backend.serverUserTotal)
-        assertEquals(0, database.syncDao().pending().size)
+        assertEquals(0, database.syncDao().pending(DEVICE).size)
     }
 
     @Test
@@ -158,13 +179,13 @@ class SyncRepositoryTest {
     fun `existing history from before the outbox is claimed once`() = runBlocking {
         // A device upgrading from v1.0.0: counts in the ledger, nothing in the outbox.
         database.countDao().addCount(dhikrId = 1, epochDay = 19_000, delta = 25_000, now = 0)
-        assertEquals(25_000L, database.countDao().lifetimeTotal())
-        assertEquals(0, database.syncDao().pending().size)
+        assertEquals(25_000L, database.countDao().lifetimeTotal(DEVICE))
+        assertEquals(0, database.syncDao().pending(DEVICE).size)
 
         signIn()
         syncRepository.claimExistingHistory()
 
-        val baseline = database.syncDao().pending().single()
+        val baseline = database.syncDao().pending(DEVICE).single()
         assertEquals(SyncOperationKind.BASELINE.name, baseline.kind)
         assertEquals(25_000L, baseline.delta)
 
@@ -203,7 +224,7 @@ class SyncRepositoryTest {
             25_500L,
             backend.serverUserTotal,
         )
-        assertEquals(25_500L, database.countDao().lifetimeTotal())
+        assertEquals(25_500L, database.countDao().lifetimeTotal(DEVICE))
     }
 
     @Test
@@ -215,8 +236,8 @@ class SyncRepositoryTest {
 
         accountRepository.clearSignedIn()
 
-        assertEquals(30, database.syncDao().pending().size)
-        assertEquals(30L, database.countDao().lifetimeTotal())
+        assertEquals(30, database.syncDao().pending(DEVICE).size)
+        assertEquals(30L, database.countDao().lifetimeTotal(DEVICE))
         assertFalse(accountRepository.state.first().isSignedIn)
 
         // Signing back in finds the work still waiting.
@@ -229,7 +250,7 @@ class SyncRepositoryTest {
     fun `syncing without an account is refused without touching the queue`() = runBlocking {
         count(7)
         assertTrue(syncRepository.syncNow().isFailure)
-        assertEquals(7, database.syncDao().pending().size)
+        assertEquals(7, database.syncDao().pending(DEVICE).size)
         assertEquals(0L, backend.serverUserTotal)
     }
 
@@ -251,11 +272,11 @@ class SyncRepositoryTest {
         count(20)
         syncRepository.syncNow()
 
-        assertEquals(0, database.syncDao().pending().size)
-        assertEquals(0L, database.syncDao().observePendingTotal().first())
+        assertEquals(0, database.syncDao().pending(DEVICE).size)
+        assertEquals(0L, database.syncDao().observePendingTotal(DEVICE).first())
         // Synced rows stay in the table, marked, rather than being deleted: the record of what
         // was contributed is what makes the baseline calculation correct later.
-        assertEquals(20L, database.syncDao().countDeltaTotal())
+        assertEquals(20L, database.syncDao().countDeltaTotal(DEVICE))
         assertEquals(20, backend.accepted.size)
     }
 }

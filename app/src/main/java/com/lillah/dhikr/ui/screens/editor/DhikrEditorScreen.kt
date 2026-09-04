@@ -22,7 +22,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -44,7 +43,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.lillah.dhikr.domain.model.DhikrCollection
 import com.lillah.dhikr.ui.components.ChoicePill
-import com.lillah.dhikr.ui.components.ConfirmSheet
 import com.lillah.dhikr.ui.components.LabeledField
 import com.lillah.dhikr.ui.components.SectionHeader
 import com.lillah.dhikr.ui.components.SoftCard
@@ -61,7 +59,6 @@ fun DhikrEditorScreen(
     collections: List<DhikrCollection>,
     onUpdate: ((DhikrEditorState) -> DhikrEditorState) -> Unit,
     onSave: () -> Unit,
-    onDelete: () -> Unit,
     onArchive: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -69,7 +66,6 @@ fun DhikrEditorScreen(
 ) {
     var targetSheet by remember { mutableStateOf(false) }
     var dailySheet by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -234,22 +230,9 @@ fun DhikrEditorScreen(
                 )
                 Spacer(Modifier.size(Spacing.s))
                 Text(
-                    "Archive — keeps its history",
+                    "Archive — keeps everything you have counted",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            TextButton(
-                onClick = { confirmDelete = true },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(
-                    Icons.Rounded.DeleteOutline,
-                    null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.error,
-                )
-                Spacer(Modifier.size(Spacing.s))
-                Text("Remove this dhikr", color = MaterialTheme.colorScheme.error)
             }
         }
 
@@ -280,19 +263,6 @@ fun DhikrEditorScreen(
         )
     }
 
-    if (confirmDelete) {
-        ConfirmSheet(
-            title = "Remove this dhikr?",
-            message = "Its counting history goes with it. If you only want it out of the way, " +
-                "archive it instead — the history stays and you can bring it back later.",
-            confirmLabel = "Remove",
-            onDismiss = { confirmDelete = false },
-            onConfirm = {
-                confirmDelete = false
-                onDelete()
-            },
-        )
-    }
 }
 
 @Composable

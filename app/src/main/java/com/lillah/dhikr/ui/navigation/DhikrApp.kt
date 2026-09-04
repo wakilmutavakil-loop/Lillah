@@ -157,6 +157,7 @@ fun DhikrApp(
                     onSignOut = viewModel::signOut,
                     onSyncNow = viewModel::syncNow,
                     onDismissMessage = viewModel::dismissMessage,
+                    onSnoozePrompt = viewModel::snoozeConnectPrompt,
                     contentPadding = contentPadding,
                 )
             }
@@ -189,8 +190,6 @@ fun DhikrApp(
                     onSetDailyGoal = viewModel::setDailyGoal,
                     onManageAdhkar = { navController.navigate(Routes.MANAGE_DHIKR) },
                     onRestoreDefaults = viewModel::restoreDefaults,
-                    onClearToday = viewModel::clearToday,
-                    onClearHistory = viewModel::clearAllHistory,
                     contentPadding = contentPadding,
                 )
             }
@@ -220,7 +219,6 @@ fun DhikrApp(
                     onAddDhikr = {
                         navController.navigate(Routes.dhikrEditor(collectionId = collectionId))
                     },
-                    onResetRounds = viewModel::resetRounds,
                     contentPadding = PaddingValues(bottom = bottomInset + Spacing.l),
                 )
             }
@@ -244,7 +242,6 @@ fun DhikrApp(
                     collections = collections,
                     onUpdate = viewModel::update,
                     onSave = { viewModel.save { navController.popBackStack() } },
-                    onDelete = { viewModel.delete { navController.popBackStack() } },
                     onArchive = { viewModel.archive { navController.popBackStack() } },
                     onBack = navController::popBackStack,
                     contentPadding = contentPadding,
@@ -268,9 +265,9 @@ fun DhikrApp(
                     onPickCover = viewModel::chooseCover,
                     onClearCover = viewModel::clearCover,
                     onSave = { viewModel.save { navController.popBackStack() } },
-                    onDelete = {
-                        viewModel.delete {
-                            // The detail screen for a deleted collection cannot be returned to.
+                    onArchive = {
+                        viewModel.archive {
+                            // An archived collection is no longer in the list behind this screen.
                             navController.popBackStack(Routes.COLLECTIONS, inclusive = false)
                         }
                     },

@@ -22,8 +22,16 @@ import java.util.Locale
 
 class StatsRepository(
     private val countDao: CountDao,
+    private val profiles: ProfileRepository,
     private val clock: AppClock,
 ) {
+
+    /**
+     * Every figure below is one person's. Combining the active profile with the day ticker means
+     * switching account swaps the whole Progress screen as cleanly as midnight rolls it over.
+     */
+    private fun scope(): Flow<Pair<Long, Long>> =
+        combine(profiles.activeProfileId, today()) { pid, day -> pid to day }
 
     /**
      * Emits the current day and re-emits when the date turns over.
@@ -41,41 +49,50 @@ class StatsRepository(
     }
 
     fun observeTodayTotal(): Flow<Int> =
-        today().flatMapLatest { day -> countDao.observeDayTotal(day) }
+        scope().flatMapLatest { (pid, day) -> countDao.observeDayTotal(pid, day) }
 
-    fun observeLifetimeTotal(): Flow<Long> = countDao.observeLifetimeTotal()
+    fun observeLifetimeTotal(): Flow<Long> =
+        profiles.activeProfileId.flatMapLatest { countDao.observeLifetimeTotal(it) }
 
     fun observeGrowth(): Flow<GrowthState> =
-        countDao.observeLifetimeTotal().map { GrowthState.forTotal(it) }
+        observeLifetimeTotal().map { GrowthState.forTotal(it) }
 
-    fun observeStreak(): Flow<StreakInfo> = today().flatMapLatest { day ->
-        countDao.observeActiveDays().map { Streaks.compute(it, day) }
+    fun observeStreak(): Flow<StreakInfo> = scope().flatMapLatest { (pid, day) ->
+        countDao.observeActiveDays(pid).map { Streaks.compute(it, day) }
     }
 
-    fun observeActiveDayCount(): Flow<Int> = countDao.observeActiveDayCount()
+    fun observeActiveDayCount(): Flow<Int> =
+        profiles.activeProfileId.flatMapLatest { countDao.observeActiveDayCount(it) }
 
-    fun observeTodayBreakdown(): Flow<List<BreakdownItem>> = today().flatMapLatest { day ->
-        countDao.observeDayBreakdown(day).map { rows ->
+    fun observeTodayBreakdown(): Flow<List<BreakdownItem>> = scope().flatMapLatest { (pid, day) ->
+        countDao.observeDayBreakdown(pid, day).map { rows ->
             rows.map { BreakdownItem(it.dhikrId, it.name, it.arabic, it.accentIndex, it.total) }
         }
     }
 
-    fun observeDhikrTodayCounts(): Flow<Map<Long, Int>> = today().flatMapLatest { day ->
-        countDao.observeDayBreakdown(day).map { rows -> rows.associate { it.dhikrId to it.total } }
+    fun observeDhikrTodayCounts(): Flow<Map<Long, Int>> = scope().flatMapLatest { (pid, day) ->
+        countDao.observeDayBreakdown(pid, day)
+            .map { rows -> rows.associate { it.dhikrId to it.total } }
     }
 
     /** The week containing today, plus the week before it for comparison. */
-    fun observeWeek(): Flow<WeekStats> = today().flatMapLatest { weekStats(clock.today()) }
+    fun observeWeek(): Flow<WeekStats> = scope().flatMapLatest { (pid, _) ->
+        weekStats(pid, clock.today())
+    }
 
     /** The locale's week containing [reference], plus the week before it for comparison. */
-    fun weekStats(reference: LocalDate): Flow<WeekStats> {
+    fun weekStats(profileId: Long, reference: LocalDate): Flow<WeekStats> {
         val start = startOfWeek(reference)
         val end = start.plusDays(6)
         val previousStart = start.minusWeeks(1)
 
         return combine(
-            countDao.observeDayTotals(start.toEpochDay(), end.toEpochDay()),
-            countDao.observeDayTotals(previousStart.toEpochDay(), start.minusDays(1).toEpochDay()),
+            countDao.observeDayTotals(profileId, start.toEpochDay(), end.toEpochDay()),
+            countDao.observeDayTotals(
+                profileId,
+                previousStart.toEpochDay(),
+                start.minusDays(1).toEpochDay(),
+            ),
         ) { current, previous ->
             val days = fillRange(start, end, current)
             WeekStats(
@@ -87,35 +104,39 @@ class StatsRepository(
         }
     }
 
-    fun observeMonth(): Flow<MonthStats> = today().flatMapLatest { monthStats(clock.today()) }
+    fun observeMonth(): Flow<MonthStats> = scope().flatMapLatest { (pid, _) ->
+        monthStats(pid, clock.today())
+    }
 
-    fun monthStats(reference: LocalDate): Flow<MonthStats> {
+    fun monthStats(profileId: Long, reference: LocalDate): Flow<MonthStats> {
         val first = reference.withDayOfMonth(1)
         val last = first.plusMonths(1).minusDays(1)
-        return countDao.observeDayTotals(first.toEpochDay(), last.toEpochDay()).map { rows ->
-            val days = fillRange(first, last, rows)
-            MonthStats(
-                month = first,
-                days = days,
-                total = days.sumOf { it.total },
-                activeDays = days.count { it.total > 0 },
-            )
-        }
+        return countDao.observeDayTotals(profileId, first.toEpochDay(), last.toEpochDay())
+            .map { rows ->
+                val days = fillRange(first, last, rows)
+                MonthStats(
+                    month = first,
+                    days = days,
+                    total = days.sumOf { it.total },
+                    activeDays = days.count { it.total > 0 },
+                )
+            }
     }
 
     /** Rolling window used by the sparkline on the home screen. */
-    fun observeRecentDays(count: Int = 14): Flow<List<DayPoint>> = today().flatMapLatest {
-        val end = clock.today()
-        val start = end.minusDays((count - 1).toLong())
-        countDao.observeDayTotals(start.toEpochDay(), end.toEpochDay())
-            .map { rows -> fillRange(start, end, rows) }
-    }
+    fun observeRecentDays(count: Int = 14): Flow<List<DayPoint>> =
+        scope().flatMapLatest { (pid, _) ->
+            val end = clock.today()
+            val start = end.minusDays((count - 1).toLong())
+            countDao.observeDayTotals(pid, start.toEpochDay(), end.toEpochDay())
+                .map { rows -> fillRange(start, end, rows) }
+        }
 
     /** Calendar year to date, re-anchored when the day rolls over. */
-    fun observeYearTotal(): Flow<Int> = today().flatMapLatest {
+    fun observeYearTotal(): Flow<Int> = scope().flatMapLatest { (pid, _) ->
         val start = clock.today().withDayOfYear(1)
         val end = clock.today()
-        countDao.observeDayTotals(start.toEpochDay(), end.toEpochDay())
+        countDao.observeDayTotals(pid, start.toEpochDay(), end.toEpochDay())
             .map { rows -> rows.sumOf { it.total } }
     }
 
@@ -123,11 +144,10 @@ class StatsRepository(
 
     fun observeWeekTotal(): Flow<Int> = observeWeek().map { it.total }
 
-    suspend fun todayTotal(): Int = countDao.dayTotal(clock.todayEpochDay())
+    suspend fun todayTotal(): Int =
+        countDao.dayTotal(profiles.activeProfileId.value, clock.todayEpochDay())
 
-    suspend fun clearToday() = countDao.clearDay(clock.todayEpochDay())
-
-    suspend fun clearAllHistory() = countDao.clearAll()
+    // There is no method here that removes recorded counting. That is deliberate and permanent.
 
     companion object {
         /** Cap on a single sleep, so a clock jump cannot park the ticker for days. */

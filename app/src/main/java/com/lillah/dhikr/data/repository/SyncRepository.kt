@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -46,17 +47,20 @@ class SyncRepository(
     private val syncDao: SyncDao,
     private val countDao: CountDao,
     private val accountRepository: AccountRepository,
+    private val profiles: ProfileRepository,
     private val backend: DhikrBackend,
     private val clock: AppClock,
 ) {
+
+    private val profileId: Long get() = profiles.activeProfileId.value
 
     private val syncMutex = Mutex()
     private val syncing = MutableStateFlow(false)
 
     val status: Flow<SyncStatus> = combine(
         accountRepository.state,
-        syncDao.observePendingCount(),
-        syncDao.observePendingTotal(),
+        profiles.activeProfileId.flatMapLatest { syncDao.observePendingCount(it) },
+        profiles.activeProfileId.flatMapLatest { syncDao.observePendingTotal(it) },
         syncing,
     ) { account, pending, pendingTotal, isSyncing ->
         SyncStatus(
@@ -93,12 +97,13 @@ class SyncRepository(
      * nothing new and cannot double count.
      */
     suspend fun claimExistingHistory() {
+        val pid = profileId
         val deviceId = accountRepository.deviceId()
-        val opId = baselineOpId(deviceId)
+        val opId = baselineOpId(deviceId, pid)
         if (syncDao.exists(opId)) return
 
-        val lifetime = countDao.lifetimeTotal()
-        val alreadyQueued = syncDao.countDeltaTotal()
+        val lifetime = countDao.lifetimeTotal(pid)
+        val alreadyQueued = syncDao.countDeltaTotal(pid)
         val baseline = (lifetime - alreadyQueued).coerceAtLeast(0)
         if (baseline <= 0) return
 
@@ -112,6 +117,7 @@ class SyncRepository(
                 delta = baseline,
                 createdAt = clock.nowMillis(),
                 state = SyncState.PENDING.name,
+                profileId = pid,
             )
         )
     }
@@ -158,8 +164,9 @@ class SyncRepository(
     }
 
     private suspend fun drain(uid: String): Result<Unit> {
+        val pid = profileId
         while (true) {
-            val batch = syncDao.pending(BATCH_SIZE)
+            val batch = syncDao.pending(pid, BATCH_SIZE)
             if (batch.isEmpty()) return Result.success(Unit)
 
             val ids = batch.map { it.opId }
@@ -200,7 +207,7 @@ class SyncRepository(
         scope.launch {
             combine(
                 accountRepository.state.map { it.uid }.distinctUntilChanged(),
-                syncDao.observePendingCount(),
+                profiles.activeProfileId.flatMapLatest { syncDao.observePendingCount(it) },
             ) { uid, pending -> uid to pending }
                 .collectLatest { (uid, pending) ->
                     if (uid == null || pending == 0) return@collectLatest
@@ -216,7 +223,7 @@ class SyncRepository(
             while (true) {
                 delay(backoff)
                 val account = accountRepository.state.first()
-                val pending = syncDao.pending(limit = 1)
+                val pending = syncDao.pending(profileId, limit = 1)
                 if (account.uid == null || pending.isEmpty()) {
                     backoff = RETRY_FLOOR_MILLIS
                     continue
@@ -243,7 +250,8 @@ class SyncRepository(
         private const val RETRY_FLOOR_MILLIS = 30_000L
         private const val RETRY_CEILING_MILLIS = 15 * 60_000L
 
-        fun baselineOpId(deviceId: String) = "baseline-$deviceId"
+        /** Scoped to the profile as well as the device: two people on one phone each claim once. */
+        fun baselineOpId(deviceId: String, profileId: Long) = "baseline-$deviceId-p$profileId"
     }
 }
 

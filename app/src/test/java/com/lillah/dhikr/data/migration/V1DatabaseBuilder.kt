@@ -54,6 +54,9 @@ object V1DatabaseBuilder {
             "VALUES(42, '$V1_IDENTITY_HASH')",
     )
 
+    /** Shared with [V2DatabaseBuilder], which is v1's schema plus the sync tables. */
+    fun v1Tables(): List<String> = V1_TABLES
+
     /** Opens (creating if needed) a real v1 database file and hands it to [populate]. */
     fun create(
         context: Context,
@@ -127,5 +130,68 @@ object V1DatabaseBuilder {
 
     fun insertCounter(db: SupportSQLiteDatabase, key: String, value: Long) {
         db.execSQL("INSERT INTO counters (key, value) VALUES (?, ?)", arrayOf(key, value))
+    }
+}
+
+/**
+ * A genuine version 2 database — the schema shipped in v1.1.0, taken verbatim from `2.json`.
+ *
+ * Covers the other upgrade path into v1.2.0: someone already running v1.1.0, whose database has
+ * the sync tables but no profiles.
+ */
+object V2DatabaseBuilder {
+
+    const val V2_IDENTITY_HASH = "3d108bcc5a45d79fd5de72226f5c009c"
+
+    private val V2_EXTRA_TABLES = listOf(
+        "CREATE TABLE IF NOT EXISTS `sync_operations` (`opId` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+            "`dhikrId` INTEGER, `dhikrName` TEXT, `epochDay` INTEGER NOT NULL, " +
+            "`delta` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `state` TEXT NOT NULL, " +
+            "`attempts` INTEGER NOT NULL, `lastAttemptAt` INTEGER, `lastError` TEXT, " +
+            "`ownerUid` TEXT, PRIMARY KEY(`opId`))",
+        "CREATE INDEX IF NOT EXISTS `index_sync_operations_state` ON `sync_operations` (`state`)",
+        "CREATE INDEX IF NOT EXISTS `index_sync_operations_createdAt` " +
+            "ON `sync_operations` (`createdAt`)",
+        "CREATE TABLE IF NOT EXISTS `remote_snapshot` (`id` INTEGER NOT NULL, " +
+            "`globalTotal` INTEGER NOT NULL, `globalToday` INTEGER NOT NULL, " +
+            "`participantCount` INTEGER NOT NULL, `userTotal` INTEGER NOT NULL, " +
+            "`userUid` TEXT, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+    )
+
+    fun create(
+        context: Context,
+        name: String,
+        populate: (SupportSQLiteDatabase) -> Unit = {},
+    ) {
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(name)
+            .callback(object : SupportSQLiteOpenHelper.Callback(2) {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    // v2 is v1 plus the sync tables, so reuse v1's DDL and add to it.
+                    V1DatabaseBuilder.v1Tables().forEach(db::execSQL)
+                    V2_EXTRA_TABLES.forEach(db::execSQL)
+                    db.execSQL(
+                        "INSERT OR REPLACE INTO room_master_table (id, identity_hash) " +
+                            "VALUES(42, '$V2_IDENTITY_HASH')"
+                    )
+                }
+
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+
+        FrameworkSQLiteOpenHelperFactory().create(configuration).writableDatabase.use { db ->
+            check(db.version == 2) { "expected a version 2 database, got ${db.version}" }
+            populate(db)
+        }
+    }
+
+    fun insertOperation(db: SupportSQLiteDatabase, opId: String, delta: Long, synced: Boolean) {
+        db.execSQL(
+            "INSERT INTO sync_operations (opId, kind, dhikrId, dhikrName, epochDay, delta, " +
+                "createdAt, state, attempts, lastAttemptAt, lastError, ownerUid) " +
+                "VALUES (?, 'COUNT_DELTA', 1, 'SubhanAllah', 19000, ?, 0, ?, 0, NULL, NULL, NULL)",
+            arrayOf(opId, delta, if (synced) "SYNCED" else "PENDING"),
+        )
     }
 }

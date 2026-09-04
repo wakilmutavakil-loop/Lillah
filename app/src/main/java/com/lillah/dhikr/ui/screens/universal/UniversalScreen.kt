@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,7 @@ import com.lillah.dhikr.domain.sync.AuthMethod
 import com.lillah.dhikr.domain.sync.formatContributionPercent
 import com.lillah.dhikr.ui.components.SectionHeader
 import com.lillah.dhikr.ui.components.SoftCard
+import com.lillah.dhikr.ui.components.sheenOverlay
 import com.lillah.dhikr.ui.components.softShadow
 import com.lillah.dhikr.ui.theme.LocalAppGradients
 import com.lillah.dhikr.ui.theme.Motion
@@ -68,6 +70,7 @@ fun UniversalScreen(
     onSignOut: () -> Unit,
     onSyncNow: () -> Unit,
     onDismissMessage: () -> Unit,
+    onSnoozePrompt: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
@@ -83,6 +86,19 @@ fun UniversalScreen(
                     subtitle = "What everyone is remembering, together",
                 )
                 Spacer(Modifier.height(Spacing.l))
+                AnimatedVisibility(visible = state.connectPrompt != null) {
+                    val prompt = state.connectPrompt
+                    if (prompt != null) {
+                        Column {
+                            ConnectPromptCard(
+                                prompt = prompt,
+                                onConnect = onSyncNow,
+                                onDismiss = onSnoozePrompt,
+                            )
+                            Spacer(Modifier.height(Spacing.m))
+                        }
+                    }
+                }
                 GlobalCard(state)
                 Spacer(Modifier.height(Spacing.m))
                 ContributionCard(state)
@@ -92,7 +108,11 @@ fun UniversalScreen(
 
         item {
             Column(Modifier.padding(horizontal = Spacing.screen)) {
-                SectionHeader(title = "Your dhikr", subtitle = "Counted on this device")
+                SectionHeader(
+                title = "Your dhikr",
+                subtitle = state.profileName?.let { "Kept on this device for $it" }
+                    ?: "Kept on this device",
+            )
                 Spacer(Modifier.height(Spacing.m))
                 PersonalTotalsCard(state)
                 Spacer(Modifier.height(Spacing.m))
@@ -127,9 +147,10 @@ private fun GlobalCard(state: UniversalUiState) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .softShadow(20.dp, Radii.cardLarge, gradients.hero.first(), alpha = 0.42f)
+            .softShadow(24.dp, Radii.cardLarge, gradients.hero.first(), alpha = 0.45f)
             .clip(Radii.cardLarge)
             .background(Brush.linearGradient(gradients.hero))
+            .sheenOverlay()
             .padding(Spacing.xxl),
     ) {
         Column(
@@ -261,6 +282,18 @@ private fun ContributionCard(state: UniversalUiState) {
             textAlign = TextAlign.Center,
         )
 
+        if (state.awaitingUpload > 0) {
+            Spacer(Modifier.height(Spacing.s))
+            Text(
+                text = "${state.awaitingUpload.grouped()} of these have not joined the " +
+                    "world count yet",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+        }
+
         if (state.hasGlobalFigures) {
             Spacer(Modifier.height(Spacing.xl))
             Box(
@@ -370,15 +403,15 @@ private fun SyncCard(state: UniversalUiState, onSyncNow: () -> Unit) {
     }
     val detail = when {
         !status.backendConfigured ->
-            "No cloud is attached to this build. Nothing leaves your phone, and nothing is lost."
+            "Every dhikr is counted and kept on this device. Nothing leaves your phone."
         !status.signedIn ->
             "Your dhikr are safe on this device. Sign in to add them to the Universal Dhikr."
         status.hasPending ->
-            "${status.pendingTotal.grouped()} dhikr waiting to upload. They are already counted " +
-                "here and will sync when there is a connection."
+            "${status.pendingTotal.grouped()} dhikr counted and saved here, waiting to be added " +
+                "to the world count."
         status.lastSyncAt != null ->
-            "Last synced ${formatTimestamp(status.lastSyncAt)}."
-        else -> "Ready to sync."
+            "Your contribution is up to date. Last connected ${formatTimestamp(status.lastSyncAt)}."
+        else -> "Ready to connect."
     }
 
     SoftCard(Modifier.fillMaxWidth(), contentPadding = Spacing.l) {
@@ -587,6 +620,112 @@ private fun CountingNumber(
         color = color,
         textAlign = TextAlign.Center,
     )
+}
+
+/**
+ * The periodic invitation to go online.
+ *
+ * Deliberately shaped as an offer rather than a warning: nothing is at risk, the counting is
+ * already saved, and connecting simply adds it to the worldwide figure and brings a fresh one
+ * back. Dismissing it is a snooze, never a permanent refusal.
+ */
+@Composable
+private fun ConnectPromptCard(
+    prompt: ConnectPrompt,
+    onConnect: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val gradients = LocalAppGradients.current
+    val accent = gradients.accent(5)
+
+    val headline = when (prompt.reason) {
+        ConnectReason.NeverConnected -> "Add your dhikr to the world count"
+        ConnectReason.ContributionWaiting -> "You have dhikr waiting to join the world"
+        ConnectReason.FiguresStale -> "See where the world count is now"
+    }
+    val body = when (prompt.reason) {
+        ConnectReason.NeverConnected ->
+            "Connect once and everything you have counted is added to the worldwide total. " +
+                "It stays on your device either way."
+        ConnectReason.ContributionWaiting ->
+            "${prompt.pendingTotal.grouped()} dhikr are counted and saved here, and will be " +
+                "added to the worldwide total the moment you connect."
+        ConnectReason.FiguresStale ->
+            "The worldwide figure below was last refreshed a while ago. Connect to bring it " +
+                "up to date."
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .softShadow(16.dp, Radii.card, accent.first(), alpha = 0.34f)
+            .clip(Radii.card)
+            .background(Brush.linearGradient(accent))
+            .sheenOverlay()
+            .padding(Spacing.xl),
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Rounded.CloudQueue,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.size(Spacing.s))
+                Text(
+                    text = headline,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Color.White,
+                )
+            }
+            Spacer(Modifier.height(Spacing.s))
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.92f),
+            )
+            Spacer(Modifier.height(Spacing.l))
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(Radii.chip)
+                        .background(Color.White)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onConnect,
+                        )
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Connect now",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = accent.first(),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(Radii.chip)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onDismiss,
+                        )
+                        .padding(horizontal = Spacing.l, vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Later",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White.copy(alpha = 0.9f),
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun formatTimestamp(millis: Long): String =

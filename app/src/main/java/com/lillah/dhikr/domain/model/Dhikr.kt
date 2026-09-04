@@ -24,6 +24,7 @@ data class Dhikr(
     val roundsEpochDay: Long = 0,
     val lastCountedAt: Long? = null,
     val createdAt: Long = 0,
+    val profileId: Long = 1,
 ) {
     val safeTarget: Int get() = targetCount.coerceAtLeast(1)
 

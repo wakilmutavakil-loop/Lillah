@@ -65,16 +65,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    fun clearToday() = launch {
-        statsRepository.clearToday()
-        _messages.emit("Today's counts cleared.")
-    }
-
-    fun clearAllHistory() = launch {
-        statsRepository.clearAllHistory()
-        container.gamificationRepository.resetAll()
-        _messages.emit("All counting history cleared.")
-    }
+    // There is no clear-history action, here or anywhere else in the app. Recorded counting is
+    // permanent by design.
 
     private fun launch(block: suspend () -> Unit) {
         viewModelScope.launch { block() }

@@ -55,10 +55,11 @@ class FirestoreBackend : DhikrBackend {
         operations.forEach { operation ->
             batch.set(
                 ops.document(operation.opId),
+                // Numbers only. Which dhikr was said, and how often, is nobody's business but
+                // the user's — that stays on the device. What leaves is a count and a date, which
+                // is the least the worldwide total can be built from.
                 mapOf(
                     "kind" to operation.kind,
-                    "dhikrId" to operation.dhikrId,
-                    "dhikrName" to operation.dhikrName,
                     "epochDay" to operation.epochDay,
                     "delta" to operation.delta,
                     "createdAt" to operation.createdAt,
@@ -73,7 +74,6 @@ class FirestoreBackend : DhikrBackend {
     override suspend fun registerUser(user: AuthUser): Result<Unit> = runCatching {
         firestore.collection(USERS).document(user.uid).set(
             mapOf(
-                "displayName" to user.displayName,
                 "provider" to user.method?.id,
                 "lastSeenAt" to System.currentTimeMillis(),
             ),

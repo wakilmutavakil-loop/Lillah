@@ -19,7 +19,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * The upgrade path, tested against a real version 1 database.
+ * The upgrade path, tested against a real version 1 database and run through every migration to
+ * the current schema.
  *
  * These are the tests standing between an existing user and losing years of counting, so they
  * assert on actual rows read back through the production DAOs rather than on the migration SQL
@@ -27,9 +28,12 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-class MigrationV1ToV2Test {
+class MigrationV1ToLatestTest {
 
     private val dbName = "migration-test.db"
+
+    /** Everything that existed before v3 belongs to the device profile the migration creates. */
+    private val DEVICE = 1L
     private lateinit var context: Context
     private var database: DhikrDatabase? = null
 
@@ -81,12 +85,12 @@ class MigrationV1ToV2Test {
         assertEquals(
             "the headline total must survive the upgrade exactly",
             25_000L,
-            db.countDao().lifetimeTotal(),
+            db.countDao().lifetimeTotal(DEVICE),
         )
-        assertEquals(3, db.dhikrDao().count())
-        assertEquals(2, db.achievementDao().getAll().size)
-        assertEquals(900L, db.counterDao().get("best_day"))
-        assertEquals(12L, db.counterDao().get("morning_completions"))
+        assertEquals(3, db.dhikrDao().count(DEVICE))
+        assertEquals(2, db.achievementDao().getAll(DEVICE).size)
+        assertEquals(900L, db.counterDao().get(DEVICE, "best_day"))
+        assertEquals(12L, db.counterDao().get(DEVICE, "morning_completions"))
 
         val subhanAllah = db.dhikrDao().getById(1)
         assertNotNull(subhanAllah)
@@ -96,7 +100,7 @@ class MigrationV1ToV2Test {
         assertEquals(1L, subhanAllah.collectionId)
         assertEquals("سُبْحَانَ اللَّهِ", subhanAllah.arabic)
 
-        assertEquals(100, db.countDao().activeDays().size)
+        assertEquals(100, db.countDao().activeDays(DEVICE).size)
     }
 
     @Test
@@ -109,17 +113,17 @@ class MigrationV1ToV2Test {
         val db = openUpgraded()
 
         // Nothing is queued by the migration itself: an upgrade must not invent contributions.
-        assertEquals(emptyList<Any>(), db.syncDao().pending())
+        assertEquals(emptyList<Any>(), db.syncDao().pending(DEVICE))
         assertNull(db.syncDao().snapshot())
-        assertEquals(500L, db.countDao().lifetimeTotal())
+        assertEquals(500L, db.countDao().lifetimeTotal(DEVICE))
     }
 
     @Test
     fun `an empty v1 database upgrades`() = runBlocking {
         V1DatabaseBuilder.create(context, dbName)
         val db = openUpgraded()
-        assertEquals(0L, db.countDao().lifetimeTotal())
-        assertEquals(0, db.dhikrDao().count())
+        assertEquals(0L, db.countDao().lifetimeTotal(DEVICE))
+        assertEquals(0, db.dhikrDao().count(DEVICE))
     }
 
     @Test
@@ -155,8 +159,8 @@ class MigrationV1ToV2Test {
         }
 
         val db = openUpgraded()
-        assertEquals(days * 137L, db.countDao().lifetimeTotal())
-        assertEquals(days, db.countDao().activeDays().size)
+        assertEquals(days * 137L, db.countDao().lifetimeTotal(DEVICE))
+        assertEquals(days, db.countDao().activeDays(DEVICE).size)
     }
 
     @Test
@@ -171,8 +175,8 @@ class MigrationV1ToV2Test {
 
         // Second open runs no migration; the data must be identical, not merely present.
         val db = openUpgraded()
-        assertEquals(4_321L, db.countDao().lifetimeTotal())
-        assertEquals(1, db.dhikrDao().count())
+        assertEquals(4_321L, db.countDao().lifetimeTotal(DEVICE))
+        assertEquals(1, db.dhikrDao().count(DEVICE))
     }
 
     @Test
@@ -185,11 +189,11 @@ class MigrationV1ToV2Test {
         val db = openUpgraded()
         db.countDao().addCount(dhikrId = 1, epochDay = 19_001, delta = 5_000, now = 1L)
 
-        assertEquals(30_000L, db.countDao().lifetimeTotal())
+        assertEquals(30_000L, db.countDao().lifetimeTotal(DEVICE))
         assertEquals(
             "the pre-upgrade day must be untouched by a post-upgrade write",
             25_000,
-            db.countDao().observeDayTotal(19_000).first(),
+            db.countDao().observeDayTotal(DEVICE, 19_000).first(),
         )
     }
 }

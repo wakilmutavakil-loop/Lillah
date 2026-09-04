@@ -70,7 +70,6 @@ fun CollectionDetailScreen(
     onClearCover: () -> Unit,
     onEditCollection: () -> Unit,
     onAddDhikr: () -> Unit,
-    onResetRounds: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
@@ -91,7 +90,6 @@ fun CollectionDetailScreen(
                 onChangeCover = { picker.launch(arrayOf("image/*")) },
                 onClearCover = onClearCover,
                 onEdit = onEditCollection,
-                onResetRounds = onResetRounds,
             )
         }
 
@@ -139,7 +137,6 @@ private fun CollectionHeader(
     onChangeCover: () -> Unit,
     onClearCover: () -> Unit,
     onEdit: () -> Unit,
-    onResetRounds: () -> Unit,
 ) {
     val collection = state.collection
     var menuOpen by remember { mutableStateOf(false) }
@@ -202,10 +199,6 @@ private fun CollectionHeader(
                             onClick = { menuOpen = false; onClearCover() },
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text("Clear in-progress rounds") },
-                        onClick = { menuOpen = false; onResetRounds() },
-                    )
                 }
             }
         }

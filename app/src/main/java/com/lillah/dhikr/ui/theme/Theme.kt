@@ -20,6 +20,8 @@ data class AppGradients(
     val aurora: List<Color>,
     val accents: List<List<Color>>,
     val onHero: Color,
+    /** Overlay for gradient surfaces, so they read as lit rather than flat. */
+    val sheen: List<Color>,
     val glass: Color,
     val glassBorder: Color,
     val isDark: Boolean,
@@ -39,8 +41,13 @@ fun gradientsFor(spec: PaletteSpec, dark: Boolean) = AppGradients(
     aurora = spec.auroraStops,
     accents = List(AccentSeeds.size) { accentGradient(it, spec, dark) },
     onHero = Color.White,
-    glass = if (dark) Color.White.copy(alpha = 0.07f) else Color.White.copy(alpha = 0.66f),
-    glassBorder = if (dark) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.75f),
+    sheen = if (dark) {
+        listOf(Color.White.copy(alpha = 0.10f), Color.Transparent, Color.Black.copy(alpha = 0.12f))
+    } else {
+        listOf(Color.White.copy(alpha = 0.22f), Color.Transparent, Color.Black.copy(alpha = 0.07f))
+    },
+    glass = if (dark) Color.White.copy(alpha = 0.06f) else Color.White.copy(alpha = 0.7f),
+    glassBorder = if (dark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.8f),
     isDark = dark,
 )
 

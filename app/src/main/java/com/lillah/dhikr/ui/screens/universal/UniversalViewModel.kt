@@ -28,6 +28,16 @@ data class PersonalTotals(
     val allTimeLocal: Long = 0,
 )
 
+/** Why the app is asking the user to go online. */
+enum class ConnectReason { NeverConnected, ContributionWaiting, FiguresStale }
+
+@Immutable
+data class ConnectPrompt(
+    val reason: ConnectReason,
+    val pendingTotal: Long,
+    val lastSyncAt: Long?,
+)
+
 @Immutable
 data class UniversalUiState(
     val backendConfigured: Boolean = false,
@@ -38,21 +48,21 @@ data class UniversalUiState(
     val availableMethods: List<AuthMethod> = emptyList(),
     val signingIn: Boolean = false,
     val message: String? = null,
+    val profileName: String? = null,
+    val connectPrompt: ConnectPrompt? = null,
 ) {
     /**
-     * The user's contribution to the worldwide figure.
+     * The user's contribution, taken from this device.
      *
-     * Signed in, the account total is whatever the server has folded in, plus anything still
-     * queued on this device — so the number never stalls while a sync is pending, and a second
-     * device signing into the same account shows the account's total rather than its own.
-     * Signed out, it is simply what this device has counted.
+     * Counting is stored locally and the device is the authority on it; the network is only ever
+     * used to add that figure to the worldwide count and to read the worldwide count back. So this
+     * is the local lifetime total, always — it cannot be behind, and it cannot be lost by a
+     * failed sync.
      */
-    val userContribution: Long
-        get() = when {
-            account.isSignedIn && figures != null ->
-                figures.userTotal + syncStatus.pendingTotal
-            else -> totals.allTimeLocal
-        }
+    val userContribution: Long get() = totals.allTimeLocal
+
+    /** How much of [userContribution] the world count has not been told about yet. */
+    val awaitingUpload: Long get() = syncStatus.pendingTotal.coerceAtLeast(0)
 
     val globalTotal: Long get() = figures?.globalTotal ?: 0
 
@@ -70,8 +80,14 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
     private val statsRepository = container.statsRepository
     private val authGateway = container.authGateway
 
+    private val profileRepository = container.profileRepository
+    private val dhikrRepository = container.dhikrRepository
+
     private val signingIn = MutableStateFlow(false)
     private val message = MutableStateFlow<String?>(null)
+
+    /** Set when the user dismisses the prompt, so it stays quiet for a day. */
+    private val promptSnoozedAt = MutableStateFlow(0L)
 
     private val totals = combine(
         statsRepository.observeTodayTotal(),
@@ -88,8 +104,11 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
         syncRepository.status,
         syncRepository.cachedFigures,
         totals,
-        combine(signingIn, message) { busy, note -> busy to note },
-    ) { account, status, figures, personal, (busy, note) ->
+        combine(signingIn, message, promptSnoozedAt, profileRepository.activeProfile) {
+                busy, note, snoozed, profile ->
+            Quad(busy, note, snoozed, profile?.displayName)
+        },
+    ) { account, status, figures, personal, extras ->
         UniversalUiState(
             backendConfigured = container.backend.isConfigured,
             account = account,
@@ -97,10 +116,46 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
             figures = figures,
             totals = personal,
             availableMethods = authGateway.availableMethods,
-            signingIn = busy,
-            message = note,
+            signingIn = extras.signingIn,
+            message = extras.message,
+            profileName = extras.profileName,
+            connectPrompt = connectPrompt(status, figures, account.lastSyncAt, extras.snoozedAt),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UniversalUiState())
+
+    private data class Quad(
+        val signingIn: Boolean,
+        val message: String?,
+        val snoozedAt: Long,
+        val profileName: String?,
+    )
+
+    /**
+     * Decides whether to ask the user to go online.
+     *
+     * The app is usable indefinitely without a connection, so this is an invitation rather than a
+     * warning, and it only appears when connecting would actually achieve something: there is a
+     * contribution to add, or the worldwide figure on screen has gone stale. Dismissing it buys a
+     * day of quiet.
+     */
+    private fun connectPrompt(
+        status: SyncStatus,
+        figures: RemoteFigures?,
+        lastSyncAt: Long?,
+        snoozedAt: Long,
+    ): ConnectPrompt? {
+        if (!status.backendConfigured || !status.signedIn || status.syncing) return null
+        val now = container.clock.nowMillis()
+        if (now - snoozedAt < SNOOZE_MILLIS) return null
+
+        val reason = when {
+            lastSyncAt == null -> ConnectReason.NeverConnected
+            status.hasPending -> ConnectReason.ContributionWaiting
+            now - (figures?.updatedAt ?: 0) > STALE_MILLIS -> ConnectReason.FiguresStale
+            else -> return null
+        }
+        return ConnectPrompt(reason, status.pendingTotal, lastSyncAt)
+    }
 
     /**
      * Signs in, then attaches whatever this device already counted to the new account before the
@@ -113,6 +168,10 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
             message.value = null
             authGateway.signIn(activity, method)
                 .onSuccess { user ->
+                    // Resolve the local profile first. The first account to sign in adopts the
+                    // device profile, so an upgrading user finds their existing counting already
+                    // there; a second account gets a profile of its own and is seeded fresh.
+                    val resolution = profileRepository.onSignedIn(user)
                     accountRepository.setSignedIn(
                         uid = user.uid,
                         displayName = user.displayName,
@@ -120,6 +179,7 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
                         photoUrl = user.photoUrl,
                         method = user.method ?: method,
                     )
+                    dhikrRepository.seedIfEmpty(resolution.profileId)
                     syncRepository.registerUser(user)
                     syncRepository.claimExistingHistory()
                     syncRepository.syncNow()
@@ -150,5 +210,17 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
 
     fun dismissMessage() {
         message.value = null
+    }
+
+    /** Quiets the connect prompt for a day. It never disables it permanently. */
+    fun snoozeConnectPrompt() {
+        val now = container.clock.nowMillis()
+        promptSnoozedAt.value = now
+        viewModelScope.launch { accountRepository.recordConnectPrompt(now) }
+    }
+
+    private companion object {
+        const val SNOOZE_MILLIS = 24 * 60 * 60 * 1000L
+        const val STALE_MILLIS = 12 * 60 * 60 * 1000L
     }
 }

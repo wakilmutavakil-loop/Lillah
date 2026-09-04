@@ -95,9 +95,10 @@ fun GradientCard(
     Column(
         modifier = modifier
             .then(if (onClick != null) Modifier.scale(scale) else Modifier)
-            .softShadow(18.dp, shape, stops.first(), alpha = 0.4f)
+            .softShadow(20.dp, shape, stops.first(), alpha = 0.42f)
             .clip(shape)
             .background(Brush.linearGradient(stops))
+            .sheenOverlay()
             .then(
                 if (onClick != null) {
                     Modifier.clickable(
