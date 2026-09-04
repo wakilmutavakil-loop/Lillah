@@ -76,6 +76,28 @@ class UniversalScreenTest {
     }
 
     @Test
+    fun `an unread today figure shows as unknown, never as zero`() {
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(deviceId = "d", uid = "u", displayName = "Aisha"),
+                syncStatus = SyncStatus(backendConfigured = true, signedIn = true),
+                figures = RemoteFigures(
+                    globalTotal = 2_000_000_000,
+                    globalToday = null,
+                    participantCount = 51_284,
+                ),
+                totals = PersonalTotals(allTimeLocal = 30_000),
+            )
+        )
+
+        // The lifetime total is real and shown; today's could not be read, and saying "0" would
+        // claim nobody counted today.
+        compose.scrollTo("worldwide today")
+        compose.onNodeWithText("\u2014").assertIsDisplayed()
+    }
+
+    @Test
     fun `the share reflects work still queued, so the number never stalls mid-sync`() {
         val state = UniversalUiState(
             backendConfigured = true,
@@ -233,6 +255,83 @@ class UniversalScreenTest {
         compose.scrollTo("500 of these have not joined the world count yet")
         compose.onNodeWithText("500 of these have not joined the world count yet")
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun `signed in with no figures yet never tells you to sign in`() {
+        // Exactly the state a user reported: signed in, contribution counted, world figure not
+        // read back yet. The card used to say "Sign in to join the worldwide count".
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(uid = "u", displayName = "Wakil"),
+                syncStatus = SyncStatus(
+                    backendConfigured = true,
+                    signedIn = true,
+                    pendingOperations = 1,
+                    pendingTotal = 2_018,
+                ),
+                figures = null,
+                totals = PersonalTotals(allTimeLocal = 2_018),
+            )
+        )
+
+        compose.onAllNodesWithText("Sign in below to add your dhikr to the worldwide count.")
+            .assertCountEquals(0)
+        compose.onNodeWithText("Connect to read the worldwide count.").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a signed-out user is the one asked to sign in`() {
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                syncStatus = SyncStatus(backendConfigured = true),
+                totals = PersonalTotals(allTimeLocal = 900),
+            )
+        )
+        compose.onNodeWithText("Sign in below to add your dhikr to the worldwide count.")
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `a refused database says what to do about it`() {
+        val refusal = "The database is not accepting writes yet. Publish the security rules in " +
+            "the Firebase console (Firestore Database → Rules → Publish), then try again."
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(uid = "u"),
+                syncStatus = SyncStatus(
+                    backendConfigured = true,
+                    signedIn = true,
+                    pendingOperations = 1,
+                    pendingTotal = 2_018,
+                    lastError = refusal,
+                ),
+                totals = PersonalTotals(allTimeLocal = 2_018),
+            )
+        )
+
+        // On the world card, in place of the missing figure...
+        compose.onNodeWithText(refusal).assertIsDisplayed()
+        // ...and again on the sync card, where the user looks for status.
+        compose.scrollTo("Could not connect")
+        compose.onNodeWithText("Could not connect").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a worldwide total of zero is shown as a number, not as missing data`() {
+        render(
+            UniversalUiState(
+                backendConfigured = true,
+                account = AccountState(uid = "u"),
+                syncStatus = SyncStatus(backendConfigured = true, signedIn = true),
+                figures = RemoteFigures(globalTotal = 0, participantCount = 1),
+                totals = PersonalTotals(allTimeLocal = 0),
+            )
+        )
+        compose.onNodeWithText("Total dhikr worldwide").assertIsDisplayed()
     }
 }
 

@@ -70,7 +70,21 @@ data class UniversalUiState(
     val contributionPercent: Double
         get() = contributionPercent(userContribution, globalTotal)
 
-    val hasGlobalFigures: Boolean get() = figures != null && globalTotal > 0
+    /** True once a figure has actually been read back. Zero is a real answer, not a missing one. */
+    val hasGlobalFigures: Boolean get() = figures != null
+
+    /** Why the worldwide figure is not on screen, phrased for the person looking at it. */
+    val globalPlaceholder: String
+        get() = when {
+            !backendConfigured ->
+                "This build has no cloud attached. Everything below is counted and kept on " +
+                    "your device."
+            !account.isSignedIn ->
+                "Sign in below to add your dhikr to the worldwide count."
+            syncStatus.lastError != null -> syncStatus.lastError
+            syncStatus.syncing -> "Reading the worldwide count…"
+            else -> "Connect to read the worldwide count."
+        }
 }
 
 class UniversalViewModel(private val container: AppContainer) : ViewModel() {
@@ -155,6 +169,12 @@ class UniversalViewModel(private val container: AppContainer) : ViewModel() {
             else -> return null
         }
         return ConnectPrompt(reason, status.pendingTotal, lastSyncAt)
+    }
+
+    init {
+        // Opening the tab reads the worldwide figure. Without this the board only ever filled in
+        // as a side effect of an upload, so a user with nothing to contribute saw nothing at all.
+        viewModelScope.launch { syncRepository.refreshFigures() }
     }
 
     /**

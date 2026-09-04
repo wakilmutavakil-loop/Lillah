@@ -134,6 +134,18 @@ Reads are open to any signed-in user, because Firestore evaluates rules for aggr
 too and the worldwide sum has to be allowed to run. What that exposes is a random account id and a
 number.
 
+### The one index
+
+The headline worldwide total is an unfiltered `sum()` across the collection, which Firestore
+serves with no index at all. The *today* figure is different: it filters on `todayEpochDay` and
+sums `todayTotal`, and a filtered aggregation needs a composite index over both fields.
+
+`firestore.indexes.json` declares it. If you deploy by pasting into the console rather than with
+the CLI, you can skip it — the two figures are fetched separately and a missing index only makes
+today's read as `—`. The lifetime total, the participant count and everybody's contribution are
+unaffected. To add it later: Firebase console → Firestore Database → Indexes → Create index, on
+collection `contributions`, fields `todayEpochDay` ascending then `todayTotal` ascending.
+
 ### Worth adding later
 
 **App Check** would tie writes to genuine installs of your app, which is the proper answer to

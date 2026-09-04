@@ -37,7 +37,8 @@ data class AuthUser(
 @Immutable
 data class RemoteFigures(
     val globalTotal: Long = 0,
-    val globalToday: Long = 0,
+    /** Null when the server could not give today's figure — never a fabricated zero. */
+    val globalToday: Long? = null,
     val participantCount: Long = 0,
     val userTotal: Long = 0,
     val updatedAt: Long = 0,

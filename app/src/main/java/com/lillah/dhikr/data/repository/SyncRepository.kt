@@ -1,7 +1,9 @@
 package com.lillah.dhikr.data.repository
 
 import com.lillah.dhikr.core.time.AppClock
+import com.lillah.dhikr.data.backend.BackendRefused
 import com.lillah.dhikr.data.backend.BackendUnavailable
+import com.lillah.dhikr.data.backend.BackendUnreachable
 import com.lillah.dhikr.data.backend.DhikrBackend
 import com.lillah.dhikr.data.local.dao.CountDao
 import com.lillah.dhikr.data.local.dao.SyncDao
@@ -96,7 +98,7 @@ class SyncRepository(
         snapshot?.let {
             RemoteFigures(
                 globalTotal = it.globalTotal,
-                globalToday = it.globalToday,
+                globalToday = it.globalToday.takeIf { today -> today >= 0 },
                 participantCount = it.participantCount,
                 userTotal = it.userTotal,
                 updatedAt = it.updatedAt,
@@ -138,12 +140,13 @@ class SyncRepository(
                 syncDao.markAllSynced(pid, uid, now)
                 accountRepository.recordSyncSuccess(now)
 
+                // The contribution landed, so nothing is outstanding — but if the figure cannot
+                // be read back the board has nothing to show, and saying so beats a silent blank.
                 backend.fetchFigures(today)
                     .onSuccess { cache(it) }
-                    .onFailure {
-                        // The contribution landed; only the read-back failed. Not worth reporting
-                        // as a sync failure, because nothing is outstanding.
-                        return@withLock Result.success(Unit)
+                    .onFailure { error ->
+                        accountRepository.recordSyncFailure(error.userMessage())
+                        return@withLock Result.failure(error)
                     }
 
                 Result.success(Unit)
@@ -153,10 +156,20 @@ class SyncRepository(
         }
     }
 
-    /** Refreshes the worldwide figures without publishing. Used when there is nothing to add. */
+    /**
+     * Reads the worldwide figures without publishing.
+     *
+     * Needed on its own because the board should fill in for somebody with nothing to contribute
+     * — a user who has already synced, or who has just opened the tab — rather than only ever
+     * updating as a side effect of a successful upload.
+     */
     suspend fun refreshFigures(): Result<Unit> {
         if (!backend.isConfigured) return Result.failure(BackendUnavailable)
-        return backend.fetchFigures(clock.todayEpochDay()).map { cache(it) }
+        if (!accountRepository.state.first().isSignedIn) return Result.failure(NotSignedIn)
+        return backend.fetchFigures(clock.todayEpochDay())
+            .onSuccess { cache(it) }
+            .onFailure { accountRepository.recordSyncFailure(it.userMessage()) }
+            .map { }
     }
 
     private suspend fun cache(figures: RemoteFigures) {
@@ -164,7 +177,9 @@ class SyncRepository(
             RemoteSnapshotEntity(
                 id = 0,
                 globalTotal = figures.globalTotal,
-                globalToday = figures.globalToday,
+                // The stored column is non-null, so an unknown figure is kept as -1 rather than
+                // as a zero that would read on screen as "nobody counted today".
+                globalToday = figures.globalToday ?: UNKNOWN_FIGURE,
                 participantCount = figures.participantCount,
                 userTotal = figures.userTotal,
                 userUid = accountRepository.state.first().uid,
@@ -194,6 +209,22 @@ class SyncRepository(
                 }
         }
 
+        // Keep the worldwide figure current even when this device has nothing to add. Without
+        // this the board only ever moved as a side effect of an upload, so a fully synced user
+        // watched a frozen number.
+        scope.launch {
+            accountRepository.state
+                .map { it.isSignedIn }
+                .distinctUntilChanged()
+                .collectLatest { signedIn ->
+                    if (!signedIn) return@collectLatest
+                    while (true) {
+                        runCatching { refreshFigures() }
+                        delay(FIGURE_REFRESH_MILLIS)
+                    }
+                }
+        }
+
         scope.launch {
             var backoff = RETRY_FLOOR_MILLIS
             while (true) {
@@ -215,9 +246,12 @@ class SyncRepository(
     }
 
     companion object {
+        /** Sentinel for a figure the server would not give, stored in a non-null column. */
+        private const val UNKNOWN_FIGURE = -1L
         private const val SETTLE_MILLIS = 2_500L
         private const val RETRY_FLOOR_MILLIS = 30_000L
         private const val RETRY_CEILING_MILLIS = 15 * 60_000L
+        private const val FIGURE_REFRESH_MILLIS = 20 * 60_000L
     }
 }
 
@@ -225,5 +259,7 @@ class SyncRepository(
 internal fun Throwable.userMessage(): String = when (this) {
     is BackendUnavailable -> "Cloud sync is not set up in this build."
     is NotSignedIn -> "Sign in to add your dhikr to the world count."
+    // BackendRefused and BackendUnreachable already carry text written for a person to read.
+    is BackendRefused, is BackendUnreachable -> message ?: "Could not reach the world count."
     else -> message?.take(160) ?: "Could not reach the world count."
 }

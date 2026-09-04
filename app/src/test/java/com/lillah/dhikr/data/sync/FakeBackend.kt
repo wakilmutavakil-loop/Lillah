@@ -22,6 +22,14 @@ class FakeBackend(
     var failNextPublish: Throwable? = null
     var failNextFetch: Throwable? = null
 
+    /**
+     * Mirrors the real backend giving up on today's figure alone.
+     *
+     * Today's worldwide number is a filtered aggregation and needs a composite index the lifetime
+     * total does not, so the server can answer one and refuse the other.
+     */
+    var todayFigureUnknown = false
+
     /** What the server would compute: a sum across the collection. */
     val worldTotal: Long get() = contributions.values.sum()
 
@@ -49,7 +57,7 @@ class FakeBackend(
         return Result.success(
             RemoteFigures(
                 globalTotal = worldTotal,
-                globalToday = todayTotals.values.sum(),
+                globalToday = if (todayFigureUnknown) null else todayTotals.values.sum(),
                 participantCount = contributions.size.toLong(),
                 userTotal = 0,
                 updatedAt = 1_000L,

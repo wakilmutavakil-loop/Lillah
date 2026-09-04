@@ -19,6 +19,8 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -216,17 +218,47 @@ class SyncRepositoryTest {
     }
 
     @Test
-    fun `a lost read-back still counts as a successful contribution`() = runBlocking {
+    fun `a lost read-back keeps the contribution but is reported`() = runBlocking {
         signIn()
         count(40)
         backend.failNextFetch = java.io.IOException("read failed")
 
-        assertTrue(
-            "the contribution landed; only the world figure could not be read",
-            syncRepository.syncNow().isSuccess,
-        )
+        // The contribution is not rolled back: it landed, and nothing is owed any more.
+        val result = syncRepository.syncNow()
         assertEquals(40L, backend.worldTotal)
         assertEquals(0L, syncRepository.status.first().pendingTotal)
+
+        // But the board has no figure to show, so the failure has to reach the screen rather
+        // than being swallowed — otherwise the user reads a blank world count as a bug.
+        assertTrue("the read-back failure is reported", result.isFailure)
+        assertNotNull(syncRepository.status.first().lastError)
+    }
+
+    @Test
+    fun `a world total still shows when today's figure cannot be read`() = runBlocking {
+        // Today's figure is a filtered aggregation and needs an index the lifetime total does
+        // not, so the server can answer one and refuse the other. That must not blank the board.
+        signIn()
+        count(90)
+        backend.todayFigureUnknown = true
+
+        assertTrue(syncRepository.syncNow().isSuccess)
+
+        val figures = syncRepository.cachedFigures.first()
+        assertNotNull("the board still has a worldwide total to show", figures)
+        assertEquals(90L, figures!!.globalTotal)
+        assertNull("an unread figure stays unknown rather than becoming a zero", figures.globalToday)
+    }
+
+    @Test
+    fun `a known today figure of zero is kept as zero`() = runBlocking {
+        // The mirror of the case above: nobody has counted yet today, and that is a real answer.
+        signIn()
+        database.countDao().addCount(dhikrId = 1, epochDay = 18_000, delta = 90, now = 0)
+
+        assertTrue(syncRepository.syncNow().isSuccess)
+
+        assertEquals(0L, syncRepository.cachedFigures.first()?.globalToday)
     }
 
     @Test

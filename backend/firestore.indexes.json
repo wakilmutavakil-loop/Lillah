@@ -1,4 +1,14 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "//": "Serves the worldwide 'today' figure: sum(todayTotal) over the documents whose todayEpochDay is today. Firestore builds single-field indexes on its own, but a filtered aggregation needs the aggregated field in the index too. Without this the app still shows the lifetime world total and reports today's as unknown.",
+      "collectionGroup": "contributions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "todayEpochDay", "order": "ASCENDING" },
+        { "fieldPath": "todayTotal", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

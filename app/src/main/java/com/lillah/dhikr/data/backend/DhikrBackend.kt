@@ -94,3 +94,13 @@ class UnconfiguredAuthGateway : AuthGateway {
 object BackendUnavailable : Exception(
     "Cloud sync is not configured in this build. Dhikr are still counted and stored on this device."
 )
+
+/**
+ * The server understood and said no — almost always because the security rules have not been
+ * published yet, which is a setup step rather than a fault, and one the user can act on if the
+ * app says so plainly instead of failing quietly.
+ */
+class BackendRefused(message: String) : Exception(message)
+
+/** Could not reach the server at all: no connection, a timeout, or the project unreachable. */
+class BackendUnreachable(message: String) : Exception(message)

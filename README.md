@@ -3,7 +3,7 @@
 A digital tasbih and daily remembrance app for Android. Offline-first, and built so that keeping
 a habit feels better than breaking one.
 
-<sub>Package `com.lillah.dhikr` · v1.3.0 (versionCode 4) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
+<sub>Package `com.lillah.dhikr` · v1.4.0 (versionCode 5) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
 
 ---
 
@@ -64,14 +64,14 @@ only way to remove anything, and that is the operating system's doing, not the a
 
 ## Upgrading
 
-Installing v1.3.0 over any earlier version is an ordinary update. There is no uninstall step, and
+Installing v1.4.0 over any earlier version is an ordinary update. There is no uninstall step, and
 nothing is reset. Three things make that true, and all three are verified against the built APK
 rather than assumed:
 
 | | |
 | --- | --- |
 | **Same package id** | `com.lillah.dhikr`, unchanged since v1.0.0 |
-| **Higher versionCode** | 1 → 2 → 3 → 4 |
+| **Higher versionCode** | 1 → 2 → 3 → 4 → 5 |
 | **Same signing key** | SHA-256 `35:DA:2A:FB…`, identical to the released v1.0.0 APK |
 
 Every migration is additive. Version 2 added two tables. Version 3 adds profiles and a
@@ -80,6 +80,7 @@ every existing row therefore already belongs to. Nobody's history moves, because
 profile for it to be in.
 
 Version 4 adds one table recording what the world count was last told, and alters nothing.
+Version 5 changes no schema at all — it is a fix to the Universal Dhikr board only.
 
 Achievements and counters needed a composite key, and SQLite cannot add one without rebuilding the
 table. Rather than rebuild a table holding user data, their rows are **copied** into new

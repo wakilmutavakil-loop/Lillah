@@ -196,12 +196,7 @@ private fun GlobalCard(state: UniversalUiState) {
                 )
                 Spacer(Modifier.height(Spacing.xs))
                 Text(
-                    text = if (state.backendConfigured) {
-                        "Sign in to join the worldwide count."
-                    } else {
-                        "This build has no cloud attached. Everything below is counted and kept " +
-                            "on your device."
-                    },
+                    text = state.globalPlaceholder,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.85f),
                     textAlign = TextAlign.Center,
@@ -221,7 +216,7 @@ private fun GlobalCard(state: UniversalUiState) {
                     )
                     GlobalFigure(
                         icon = Icons.Rounded.Public,
-                        value = state.figures?.globalToday?.grouped() ?: "0",
+                        value = state.figures?.globalToday?.grouped() ?: "—",
                         label = "worldwide today",
                     )
                 }
@@ -390,6 +385,7 @@ private fun SyncCard(state: UniversalUiState, onSyncNow: () -> Unit) {
     val status = state.syncStatus
     val icon = when {
         !status.backendConfigured -> Icons.Rounded.CloudOff
+        status.lastError != null && !status.syncing -> Icons.Rounded.CloudOff
         status.hasPending -> Icons.Rounded.CloudQueue
         status.signedIn -> Icons.Rounded.CloudDone
         else -> Icons.Rounded.CloudOff
@@ -397,13 +393,15 @@ private fun SyncCard(state: UniversalUiState, onSyncNow: () -> Unit) {
     val headline = when {
         !status.backendConfigured -> "Saved on this device"
         !status.signedIn -> "Not syncing"
-        status.syncing -> "Syncing…"
+        status.syncing -> "Connecting…"
+        status.lastError != null -> "Could not connect"
         status.hasPending -> "Sync pending"
         else -> "Everything synced"
     }
     val detail = when {
         !status.backendConfigured ->
             "Every dhikr is counted and kept on this device. Nothing leaves your phone."
+        status.lastError != null && !status.syncing -> status.lastError
         !status.signedIn ->
             "Your dhikr are safe on this device. Sign in to add them to the Universal Dhikr."
         status.hasPending ->
