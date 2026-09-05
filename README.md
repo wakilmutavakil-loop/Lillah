@@ -3,7 +3,7 @@
 A digital tasbih and daily remembrance app for Android. Offline-first, and built so that keeping
 a habit feels better than breaking one.
 
-<sub>Package `com.lillah.dhikr` · v1.4.0 (versionCode 5) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
+<sub>Package `com.lillah.dhikr` · v1.5.0 (versionCode 6) · Kotlin · Jetpack Compose · minSdk 26 · targetSdk 35</sub>
 
 ---
 
@@ -64,14 +64,14 @@ only way to remove anything, and that is the operating system's doing, not the a
 
 ## Upgrading
 
-Installing v1.4.0 over any earlier version is an ordinary update. There is no uninstall step, and
+Installing v1.5.0 over any earlier version is an ordinary update. There is no uninstall step, and
 nothing is reset. Three things make that true, and all three are verified against the built APK
 rather than assumed:
 
 | | |
 | --- | --- |
 | **Same package id** | `com.lillah.dhikr`, unchanged since v1.0.0 |
-| **Higher versionCode** | 1 → 2 → 3 → 4 → 5 |
+| **Higher versionCode** | 1 → 2 → 3 → 4 → 5 → 6 |
 | **Same signing key** | SHA-256 `35:DA:2A:FB…`, identical to the released v1.0.0 APK |
 
 Every migration is additive. Version 2 added two tables. Version 3 adds profiles and a
@@ -82,12 +82,22 @@ profile for it to be in.
 Version 4 adds one table recording what the world count was last told, and alters nothing.
 Version 5 changes no schema at all — it is a fix to the Universal Dhikr board only.
 
+Version 6 changes no schema either, and instead **puts back counting that an earlier bug
+destroyed**. Saving an edit to a dhikr used `INSERT OR REPLACE`, which SQLite performs as a
+delete followed by an insert; `dhikr_counts` cascades on that delete, so changing
+"repetitions per round" erased that dhikr's whole history. Version 6 of the code cannot do
+that any more, and its migration rebuilds the lost days from `sync_operations` — an
+append-only ledger that records every count, is never deleted from, and deliberately carries
+no foreign key to `dhikr`, so the cascade could not reach it. The repair only ever adds:
+a database that never hit the bug comes through untouched. Counting erased before v1.1.0,
+when that ledger was introduced, has no record anywhere and cannot be recovered.
+
 Achievements and counters needed a composite key, and SQLite cannot add one without rebuilding the
 table. Rather than rebuild a table holding user data, their rows are **copied** into new
 per-profile tables and the originals are left exactly where they are — still populated, never
 written to again, never dropped.
 
-Two test suites run against real databases built from the released schemas' own DDL and identity
+Three test suites run against real databases built from the released schemas' own DDL and identity
 hashes:
 
 - `MigrationV1ToLatestTest` — 25,000 counts over 100 days survive the whole chain exactly, a
@@ -96,6 +106,11 @@ hashes:
 - `MigrationV2ToV3Test` — a v1.1.0 database keeps its counts, achievements, counters and sync
   queue; the device profile is created; and the pre-v3 tables are asserted to still hold their
   rows afterwards.
+- `MigrationV4ToV5RepairTest` — reproduces the data loss with the statement that caused it,
+  issued on Room's own connection, asserts the history really is gone, then opens the database
+  through the migrations and requires it back. Also covers a day wiped and counted on again
+  (topped up, not doubled), undos staying undone, and an unaffected database coming through
+  byte-for-byte unchanged.
 
 ### Signing and upgrade continuity
 

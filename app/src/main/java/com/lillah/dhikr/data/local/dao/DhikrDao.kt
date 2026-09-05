@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import com.lillah.dhikr.data.local.entity.DhikrEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -51,11 +52,29 @@ interface DhikrDao {
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM dhikr WHERE profileId = :profileId")
     suspend fun maxSortOrder(profileId: Long): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(entity: DhikrEntity): Long
+    /**
+     * Inserts a new dhikr, or updates the existing row in place.
+     *
+     * **Never `OnConflictStrategy.REPLACE`.** SQLite implements `INSERT OR REPLACE` as a delete
+     * followed by an insert, and `dhikr_counts` cascades on the delete of its dhikr — so saving
+     * an edit through REPLACE erased every day that dhikr had ever been counted. `@Upsert`
+     * inserts, and on a primary-key conflict issues an `UPDATE`, which touches no child row.
+     */
+    @Upsert
+    suspend fun upsert(entity: DhikrEntity): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /** Seeding only: adds shipped adhkar that are missing and leaves anything present alone. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(entities: List<DhikrEntity>): List<Long>
+
+    /**
+     * Changes the target alone.
+     *
+     * The counter's "Repetitions per round" sheet has no business rewriting the whole row: doing
+     * that from a screen snapshot can roll back a live round if the user counted in between.
+     */
+    @Query("UPDATE dhikr SET targetCount = :target WHERE id = :id")
+    suspend fun setTarget(id: Long, target: Int)
 
     @Update
     suspend fun update(entity: DhikrEntity)

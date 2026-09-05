@@ -224,10 +224,14 @@ class DhikrRepository(
             createdAt = if (isNew) clock.nowMillis() else dhikr.createdAt,
             profileId = if (isNew) pid else dhikr.profileId,
         )
-        val id = dhikrDao.insert(entity)
+        val id = dhikrDao.upsert(entity)
         if (isNew && !dhikr.isBuiltIn) counterDao.increment(pid, CounterKeys.CUSTOM_DHIKR)
         return if (id > 0) id else dhikr.id
     }
+
+    /** Changes the target and nothing else, so a live round in progress is never rolled back. */
+    suspend fun setTarget(dhikrId: Long, target: Int) =
+        dhikrDao.setTarget(dhikrId, target.coerceIn(1, 10_000))
 
     suspend fun setArchived(dhikrId: Long, archived: Boolean) =
         dhikrDao.setArchived(dhikrId, archived)
@@ -242,7 +246,7 @@ class DhikrRepository(
             sortOrder = if (isNew) collectionDao.maxSortOrder(pid) + 1 else collection.sortOrder,
             profileId = if (isNew) pid else collection.profileId,
         )
-        val id = collectionDao.insert(entity)
+        val id = collectionDao.upsert(entity)
         if (isNew && !collection.isBuiltIn) {
             counterDao.increment(pid, CounterKeys.CUSTOM_COLLECTIONS)
         }
@@ -306,7 +310,7 @@ class DhikrRepository(
         seedIndex: Int,
     ): Long {
         collectionDao.getByKind(profileId, kind.name)?.let { return it.id }
-        return collectionDao.insert(SeedData.collections[seedIndex].copy(profileId = profileId))
+        return collectionDao.upsert(SeedData.collections[seedIndex].copy(profileId = profileId))
     }
 }
 

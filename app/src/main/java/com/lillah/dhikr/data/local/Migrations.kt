@@ -184,5 +184,81 @@ object Migrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    /**
+     * 4 to 5 — repairing history destroyed by `INSERT OR REPLACE`.
+     *
+     * Saving an edit to a dhikr went through `INSERT OR REPLACE`, and SQLite implements REPLACE
+     * as a *delete followed by an insert*. `dhikr_counts` cascades on the delete of its dhikr, so
+     * every edit — changing "repetitions per round" above all, which is a one-tap action —
+     * silently erased that dhikr's entire counting history. Version 5 of the code cannot do that
+     * any more. This migration is about the damage already done.
+     *
+     * The history is recoverable because `sync_operations` is an append-only ledger that records
+     * every single count as `(dhikrId, epochDay, delta)`, is written in the same transaction as
+     * the count itself, is never deleted from, and — deliberately — carries no foreign key to
+     * `dhikr`. The cascade could not touch it. Summing it by day therefore reconstructs exactly
+     * what `dhikr_counts` held.
+     *
+     * Two statements, both strictly additive:
+     *
+     *  1. put back the days that are missing outright, and
+     *  2. raise any day that survived but is *lower* than the ledger — which is what a user sees
+     *     after being wiped and then carrying on counting on the same day.
+     *
+     * Nothing is ever lowered or removed. A device that never hit the bug has a ledger that
+     * agrees with its counts, so both statements find nothing to do and the database is untouched.
+     *
+     * Raising a surviving row is only sound if the ledger cannot legitimately exceed the counts,
+     * and it cannot: every `COUNT_DELTA` row is written by `increment` or `decrement` inside the
+     * same transaction as its `addCount`, with the same dhikr, day and delta, and those are the
+     * only two places that enqueue one. `BASELINE` is filtered out here and is in any case never
+     * produced. The one way the two can drift is `addCount`'s `MAX(0, …)` clamp, which can leave
+     * the ledger *lower* after an undo at zero — the direction this migration ignores. So a day
+     * whose ledger exceeds its count is a day that lost rows, and the cascade is the only thing
+     * that removes them.
+     *
+     * One honest limit: the ledger only exists from v1.1.0, when the outbox was added. Counting
+     * erased before that upgrade has no record anywhere and cannot be brought back.
+     */
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Days the cascade removed entirely.
+            db.execSQL(
+                """
+                INSERT INTO `dhikr_counts` (`dhikrId`, `epochDay`, `count`, `updatedAt`)
+                SELECT o.`dhikrId`, o.`epochDay`, SUM(o.`delta`), MAX(o.`createdAt`)
+                FROM `sync_operations` o
+                WHERE o.`kind` = 'COUNT_DELTA'
+                  AND o.`dhikrId` IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM `dhikr` d WHERE d.`id` = o.`dhikrId`)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM `dhikr_counts` c
+                      WHERE c.`dhikrId` = o.`dhikrId` AND c.`epochDay` = o.`epochDay`
+                  )
+                GROUP BY o.`dhikrId`, o.`epochDay`
+                HAVING SUM(o.`delta`) > 0
+                """.trimIndent()
+            )
+
+            // Days wiped and then counted on again, which survive holding only the remainder.
+            db.execSQL(
+                """
+                UPDATE `dhikr_counts` SET `count` = (
+                    SELECT SUM(o.`delta`) FROM `sync_operations` o
+                    WHERE o.`kind` = 'COUNT_DELTA'
+                      AND o.`dhikrId` = `dhikr_counts`.`dhikrId`
+                      AND o.`epochDay` = `dhikr_counts`.`epochDay`
+                )
+                WHERE (
+                    SELECT SUM(o.`delta`) FROM `sync_operations` o
+                    WHERE o.`kind` = 'COUNT_DELTA'
+                      AND o.`dhikrId` = `dhikr_counts`.`dhikrId`
+                      AND o.`epochDay` = `dhikr_counts`.`epochDay`
+                ) > `count`
+                """.trimIndent()
+            )
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

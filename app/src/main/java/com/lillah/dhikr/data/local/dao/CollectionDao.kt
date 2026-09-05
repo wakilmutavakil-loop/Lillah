@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import com.lillah.dhikr.data.local.entity.CollectionEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -33,8 +34,14 @@ interface CollectionDao {
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM collections WHERE profileId = :profileId")
     suspend fun maxSortOrder(profileId: Long): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(entity: CollectionEntity): Long
+    /**
+     * Inserts a new collection, or updates the existing row in place.
+     *
+     * Never REPLACE: `dhikr.collectionId` is `ON DELETE SET NULL`, and REPLACE deletes before it
+     * inserts — so renaming a collection emptied it of every dhikr it held.
+     */
+    @Upsert
+    suspend fun upsert(entity: CollectionEntity): Long
 
     @Update
     suspend fun update(entity: CollectionEntity)

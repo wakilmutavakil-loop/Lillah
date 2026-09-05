@@ -226,7 +226,7 @@ class ProfileIsolationTest {
     fun `an entity insert defaults to the device profile`() = runBlocking {
         // Guards the migration's DEFAULT 1: a row written without an explicit profile must not
         // become invisible to everyone.
-        database.dhikrDao().insert(DhikrEntity(name = "Legacy row", createdAt = 0))
+        database.dhikrDao().upsert(DhikrEntity(name = "Legacy row", createdAt = 0))
         assertEquals(1, database.dhikrDao().count(1))
     }
 }

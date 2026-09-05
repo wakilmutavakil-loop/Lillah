@@ -39,7 +39,7 @@ import com.lillah.dhikr.data.local.entity.SyncOperationEntity
         ProfileCounterEntity::class,
         ProfileSyncStateEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class DhikrDatabase : RoomDatabase() {

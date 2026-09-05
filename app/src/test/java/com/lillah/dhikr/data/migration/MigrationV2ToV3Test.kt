@@ -58,8 +58,10 @@ class MigrationV2ToV3Test {
             V1DatabaseBuilder.insertCount(db, 1, 19_001, 7_000)
             V1DatabaseBuilder.insertAchievement(db, "thousand")
             V1DatabaseBuilder.insertCounter(db, "best_day", 1_200)
-            V2DatabaseBuilder.insertOperation(db, "op-synced", 18_000, synced = true)
-            V2DatabaseBuilder.insertOperation(db, "op-pending", 7_000, synced = false)
+            // One operation per counted day, matching that day's count — the only shape the app
+            // can actually write, since both rows go in together.
+            V2DatabaseBuilder.insertOperation(db, "op-synced", 18_000, synced = true, epochDay = 19_000)
+            V2DatabaseBuilder.insertOperation(db, "op-pending", 7_000, synced = false, epochDay = 19_001)
         }
 
         val db = openUpgraded()

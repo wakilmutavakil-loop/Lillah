@@ -186,12 +186,25 @@ object V2DatabaseBuilder {
         }
     }
 
-    fun insertOperation(db: SupportSQLiteDatabase, opId: String, delta: Long, synced: Boolean) {
+    /**
+     * One outbox row.
+     *
+     * [epochDay] is a parameter because the app writes an operation and its count row in the same
+     * transaction, on the same day, with the same delta — so a fixture that puts them on
+     * different days describes a device that cannot exist.
+     */
+    fun insertOperation(
+        db: SupportSQLiteDatabase,
+        opId: String,
+        delta: Long,
+        synced: Boolean,
+        epochDay: Long = 19_000,
+    ) {
         db.execSQL(
             "INSERT INTO sync_operations (opId, kind, dhikrId, dhikrName, epochDay, delta, " +
                 "createdAt, state, attempts, lastAttemptAt, lastError, ownerUid) " +
-                "VALUES (?, 'COUNT_DELTA', 1, 'SubhanAllah', 19000, ?, 0, ?, 0, NULL, NULL, NULL)",
-            arrayOf(opId, delta, if (synced) "SYNCED" else "PENDING"),
+                "VALUES (?, 'COUNT_DELTA', 1, 'SubhanAllah', ?, ?, 0, ?, 0, NULL, NULL, NULL)",
+            arrayOf(opId, epochDay, delta, if (synced) "SYNCED" else "PENDING"),
         )
     }
 }

@@ -87,7 +87,7 @@ class SyncRepositoryTest {
             backend = backend,
             clock = clock,
         )
-        database.dhikrDao().insert(
+        database.dhikrDao().upsert(
             DhikrEntity(
                 id = 1,
                 name = "SubhanAllah",
@@ -315,7 +315,7 @@ class SyncRepositoryTest {
         )
         assertNotEquals("a second person gets their own profile", 1L, second.profileId)
         accountRepository.setSignedIn("uid-b", "Bilal", null, null, AuthMethod.Google)
-        database.dhikrDao().insert(
+        database.dhikrDao().upsert(
             com.lillah.dhikr.data.local.entity.DhikrEntity(
                 id = 2, name = "Alhamdulillah", createdAt = 0, profileId = second.profileId,
             )

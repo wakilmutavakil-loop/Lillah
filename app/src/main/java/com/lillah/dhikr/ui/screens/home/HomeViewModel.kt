@@ -244,9 +244,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     fun setTarget(target: Int) {
         val dhikr = uiState.value.activeDhikr ?: return
         optimisticCount.value = null
-        viewModelScope.launch {
-            dhikrRepository.upsert(dhikr.copy(targetCount = target.coerceIn(1, 10_000)))
-        }
+        // Writes the target column only. Saving the whole row from a screen snapshot would carry
+        // a stale live round back with it.
+        viewModelScope.launch { dhikrRepository.setTarget(dhikr.id, target) }
     }
 
     fun setDailyGoal(goal: Int) {
